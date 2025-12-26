@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+## Riftbound Manual Simulator (Baseline)
+
+Manual-first tabletop client inspired by DuelingBook but tailored for Riftbound. Two authenticated Supabase users can create or join a room, manually move cards between zones, adjust life, and keep a synced log while spectators watch.
+
+### Tech Stack
+
+- Next.js App Router + TypeScript
+- Tailwind CSS v4 (using the `@tailwindcss/postcss` preset)
+- Supabase Auth, Postgres, Realtime
+- `@supabase/supabase-js` + `@supabase/ssr`
+
+### Core Features
+
+- Email/password auth with auto-created profiles
+- Protected lobby with host/join/spectate controls
+- Unique match codes, spectator toggle, placeholder 40-card decks
+- Match state stored as JSONB, synced via Supabase Realtime
+- Manual controls: draw, shuffle, mulligan, drag between zones, life +/- , end turn
+- Match event log persisted in `match_events`
+
+---
 
 ## Getting Started
 
-First, run the development server:
+### 1. Environment
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Create `.env.local` with the Supabase credentials for your project:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The service role key is only used on server route handlers.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 2. Install & Run
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+npm run dev
+```
 
-## Learn More
+Navigate to [http://localhost:3000](http://localhost:3000). You will be redirected to `/auth` for email/password login/creation.
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Database & Supabase
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Apply the baseline schema in `supabase/migrations/0001_baseline.sql` using the Supabase SQL editor or your preferred migration runner. It creates:
 
-## Deploy on Vercel
+- `profiles` (auto-filled via trigger on `auth.users`)
+- `matches`
+- `match_state`
+- `match_events`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Row Level Security policies ensure:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Only players (or any authenticated user if spectators are allowed) can read match info/state/logs
+- Only service-role routes mutate matches/state/events (clients never write directly)
+
+The stored JSON structure inside `match_state.state` matches:
+
+```json
+{
+	"players": {
+		"p1": { "id": "uuid", "life": 20, "zones": { "deck": [], "hand": [], "battlefield": [], "discard": [] } },
+		"p2": { "id": "uuid", "life": 20, "zones": { "deck": [], "hand": [], "battlefield": [], "discard": [] } }
+	},
+	"turn": "p1",
+	"phase": "main",
+	"createdAt": "ISO_STRING"
+}
+```
+
+Each new match seeds both decks with 40 placeholder cards (`Card 1`, `Card 2`, ...).
+
+---
+
+## Application Flow
+
+1. **Auth (`/auth`)** – Client-side Supabase auth page with sign-in/sign-up toggle. Successful auth routes to `/lobby`.
+2. **Lobby (`/lobby`)** – Server component ensures session, lists the user’s matches, and exposes client controls to host/join/spectate. Match creation/joining calls `/api/match/*` server routes.
+3. **Match Room (`/match/[code]`)** – Server component preloads match, state, and recent events. Client component subscribes to Supabase Realtime for `match_state` + `match_events` and drives UI interactions (drag/drop, buttons). All mutations POST to `/api/match/[code]/action`.
+
+---
+
+## Deployment Notes
+
+- Set the same env vars on the hosting platform (Vercel, Fly, etc.).
+- Ensure Supabase Realtime is enabled for `match_state` and `match_events` tables.
+- Consider locking down service-role routes further via rate limiting / middleware before production.
+
+---
+
+## Next Steps / Ideas
+
+1. Chat panel + voice integration hooks for table talk.
+2. Custom decks per profile (upload + save lists).
+3. Granular permissions (allow temporary control over opponent cards).
+4. Persistent log export + replay tooling.
+5. Mobile-friendly layout + gestures.
