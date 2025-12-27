@@ -72,7 +72,7 @@ const SECTION_ACCENTS: Record<DeckSection, { border: string; badge: string }> = 
 const SECTION_GRID_COLUMNS: Record<DeckSection, string> = {
   legend: "grid-cols-1 sm:grid-cols-2",
   main: "grid-cols-3 sm:grid-cols-4 xl:grid-cols-5",
-  runes: "grid-cols-3 sm:grid-cols-5 xl:grid-cols-7",
+  runes: "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5",
   battlefields: "grid-cols-2 sm:grid-cols-3",
   side: "grid-cols-3 sm:grid-cols-5 xl:grid-cols-6",
 };
@@ -735,17 +735,49 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   function renderCardThumb(entry: DeckCardEntry, options?: ThumbOptions) {
     const canDrag = entry.section === "main" || entry.section === "side";
     const allowAdjust = entry.section !== "legend" && entry.section !== "battlefields";
+    const isRuneEntry = entry.section === "runes";
+    const isMainEntry = entry.section === "main";
+    const isSideEntry = entry.section === "side";
+    const showBottomControls = isRuneEntry || isMainEntry || isSideEntry;
+    const runeArtwork = isRuneEntry || Boolean(entry.card && isRune(entry.card));
     const cardTypeLabel = entry.card?.classification?.type ?? entry.cardType ?? "Card";
     const battlefield = cardTypeLabel.toLowerCase().includes("battlefield");
     const aspect = battlefield ? "aspect-[4/3]" : "aspect-[5/7]";
-    const fit = battlefield ? "object-contain" : "object-cover";
+    const fit = battlefield ? "object-contain" : runeArtwork ? "object-contain" : "object-cover";
     const imageUrl = entry.card?.media.image_url;
     const key = options?.keyOverride ?? `${entry.cardId}-${entry.section}`;
     const isStackedPreview = Boolean(options?.stackedPreview);
     const stackPreviewCopies = isStackedPreview ? Math.min(entry.quantity, 4) : 1;
     const stackPadding = battlefield ? "75%" : "140%";
     const displayQuantity = options?.singleCopy ? 1 : entry.quantity;
-    const showQuantityBadge = !options?.hideQuantityBadge && displayQuantity > 1;
+    const showQuantityBadge = !(isRuneEntry || isMainEntry || isSideEntry) && !options?.hideQuantityBadge && displayQuantity > 1;
+    const quantityBadgePosition = isRuneEntry
+      ? "left-2 bottom-2"
+      : isStackedPreview
+      ? "right-2 top-2"
+      : "left-2 top-2";
+    const countBadgeStyles = isRuneEntry
+      ? {
+          text: "text-[#f4e6ff]",
+          border: "border border-[#c9a2ff]/60",
+          bg: "bg-[#1b0f2d]/95",
+          shadow: "shadow-[0_12px_35px_rgba(185,135,255,0.35)]",
+        }
+      : isMainEntry
+      ? {
+          text: "text-[#d5f9ff]",
+          border: "border border-[#7ce7f4]/60",
+          bg: "bg-[#041c23]/95",
+          shadow: "shadow-[0_12px_35px_rgba(124,231,244,0.25)]",
+        }
+      : isSideEntry
+      ? {
+          text: "text-[#edffe3]",
+          border: "border border-[#c9ffb8]/60",
+          bg: "bg-[#132611]/95",
+          shadow: "shadow-[0_12px_35px_rgba(201,255,184,0.25)]",
+        }
+      : null;
 
     const handleCardClick = () => {
       if (!entry.card) return;
@@ -776,7 +808,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     return (
       <div
         key={key}
-        className={`group relative rounded-2xl border border-white/5 bg-[#060a15]/80 p-1.5 ${options?.containerClass ?? ""}`}
+        className={`group relative flex flex-col gap-2 rounded-2xl border border-white/5 bg-[#060a15]/80 p-1.5 ${options?.containerClass ?? ""}`}
         style={options?.stackedHeight ? { minHeight: options.stackedHeight } : undefined}
         draggable={canDrag}
         onDragStart={(event) => {
@@ -791,7 +823,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         <div
           className={`${
             isStackedPreview ? "relative overflow-visible" : `relative ${aspect} overflow-hidden`
-          } rounded-xl bg-black/60`}
+          } rounded-xl bg-black/60 ${isRuneEntry ? "flex-1" : ""}`}
           style={isStackedPreview ? { paddingBottom: stackPadding } : undefined}
           onClick={handleCardClick}
           role={entry.card ? "button" : undefined}
@@ -818,11 +850,19 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           ) : (
             renderImage()
           )}
+          {countBadgeStyles && (
+            <div className="pointer-events-none absolute left-1/2 top-2 z-40 -translate-x-1/2">
+              <span
+                className={`min-w-[58px] rounded-full px-5 py-1.5 text-[1.35rem] font-black leading-none tracking-[0.15em] drop-shadow-[0_8px_18px_rgba(0,0,0,0.65)] ${countBadgeStyles.bg} ${countBadgeStyles.text} ${countBadgeStyles.border} ${countBadgeStyles.shadow}`}
+                aria-label={`${entry.quantity} copies of ${entry.cardName}`}
+              >
+                {entry.quantity}
+              </span>
+            </div>
+          )}
           {showQuantityBadge && (
             <span
-              className={`pointer-events-none absolute rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white ${
-                isStackedPreview ? "right-2 top-2" : "left-2 top-2"
-              }`}
+              className={`pointer-events-none absolute rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white ${quantityBadgePosition}`}
             >
               x{entry.quantity}
             </span>
@@ -843,7 +883,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           >
             X
           </button>
-          {allowAdjust && (
+          {allowAdjust && !showBottomControls && (
             <div className="absolute bottom-2 right-2 flex flex-col gap-1 opacity-0 transition group-hover:opacity-100">
               <button
                 type="button"
@@ -871,6 +911,32 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             {entry.cardName}
           </div>
         </div>
+        {showBottomControls && (
+          <div className="flex w-full gap-3 pt-2 text-2xl font-bold">
+            <button
+              type="button"
+              aria-label={`Increase ${entry.cardName}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                adjustQuantity(entry.cardId, entry.section, 1);
+              }}
+              className="flex-1 rounded-full border border-[#b487ff]/60 bg-[#b487ff]/20 py-1 text-[#c9a2ff] transition-transform hover:bg-[#b487ff]/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#c9a2ff]/40 active:scale-95"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              aria-label={`Decrease ${entry.cardName}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                adjustQuantity(entry.cardId, entry.section, -1);
+              }}
+              className="flex-1 rounded-full border border-white/40 bg-black/70 py-1 text-slate-100 transition-transform hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 active:scale-95"
+            >
+              -
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -884,6 +950,18 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const stackedPreview = Boolean(extra?.stacked);
     const accent = SECTION_ACCENTS[section];
     const gridClass = SECTION_GRID_COLUMNS[section] ?? "grid-cols-2";
+    const cardThumbOptions: ThumbOptions | undefined = (() => {
+      if (section === "runes" || section === "side") {
+        return { stackedPreview: true, imageSize: "280px" };
+      }
+      if (stackedPreview) {
+        return { stackedPreview: true, imageSize: "220px" };
+      }
+      if (section === "battlefields") {
+        return { imageSize: "220px" };
+      }
+      return undefined;
+    })();
 
     return (
       <div
@@ -936,13 +1014,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             )}
           </div>
         ) : (
-          <div className={`mt-3 grid gap-3 ${gridClass}`}>
+          <div className={`mt-3 grid gap-4 ${gridClass}`}>
             {cards.map((card) =>
-              renderCardThumb(card, {
-                stackedPreview,
-                stackedHeight: section === "runes" ? 200 : undefined,
-                imageSize: stackedPreview ? "220px" : undefined,
-              })
+              renderCardThumb(card, cardThumbOptions)
             )}
           </div>
         )}
@@ -1157,7 +1231,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       case "side":
         return renderSection("side", { droppable: true, stacked: true });
       case "runes":
-        return renderSection("runes", { stacked: true });
+        return renderSection("runes");
       default:
         return null;
     }
@@ -1180,6 +1254,13 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             </nav>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+            <button
+              type="button"
+              onClick={() => router.push("/lobby")}
+              className="rounded-full border border-white/20 px-4 py-1 text-[0.6rem] font-semibold tracking-[0.35em] text-slate-100 transition hover:border-[#f6d38e]/60 hover:text-[#f6d38e]"
+            >
+              Back to Lobby
+            </button>
             <span
               className={`rounded-full border border-white/10 px-3 py-1 ${dirty ? "text-amber-200" : "text-emerald-200"}`}
             >
