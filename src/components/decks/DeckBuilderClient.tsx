@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import type { DeckSummary, DeckCardEntry } from "@/src/types/deck";
+import { SECTION_TARGETS, validateDeckRules } from "@/src/lib/decks";
+import type { DeckSummary, DeckCardEntry, DeckSection } from "@/src/types/deck";
 import type { RiftCard, RiftCardListResponse } from "@/src/types/card";
 
 interface DeckBuilderClientProps {
@@ -21,6 +22,23 @@ type WorkingDeck = {
 };
 
 const MAX_CARD_COPIES = 3;
+const DRAG_MIME = "application/riftbound-card";
+
+const SECTION_LABELS: Record<DeckSection, string> = {
+  legend: "Legend",
+  main: "Main Deck",
+  runes: "Runes",
+  battlefields: "Battlefields",
+  side: "Side Deck",
+};
+
+const SECTION_HINTS: Record<DeckSection, string> = {
+  legend: "Exactly 1 legend defines your colors.",
+  main: "Exactly 40 cards, includes your legend's champion.",
+  runes: "Exactly 12 runes that match the legend's domains.",
+  battlefields: "Pick 3 unique battlefields (1 copy each).",
+  side: "Exactly 8 cards you can pivot into during matches.",
+};
 
 const emptyDeck = (): WorkingDeck => ({
   name: "Untitled Prototype",
@@ -47,6 +65,34 @@ function toWorkingDeck(deck?: DeckSummary): WorkingDeck {
   };
 }
 
+function createEntry(card: RiftCard, section: DeckSection, quantity = 1): DeckCardEntry {
+  return {
+    cardId: card.id,
+    cardName: card.name,
+    cardPublicCode: card.public_code,
+    quantity,
+    section,
+    cardDomains: card.classification?.domain ?? [],
+    cardSupertype: card.classification?.supertype ?? null,
+    cardType: card.classification?.type ?? null,
+    card,
+  };
+}
+
+function isRune(card: RiftCard) {
+  return (card.classification?.type ?? "").toLowerCase().includes("rune");
+}
+
+function isBattlefield(card: RiftCard) {
+  return (card.classification?.type ?? "").toLowerCase().includes("battlefield");
+}
+
+function isChampion(card: RiftCard) {
+  const supertype = card.classification?.supertype ?? "";
+  const type = card.classification?.type ?? "";
+  return supertype.toLowerCase() === "champion" || type.toLowerCase().includes("champion");
+}
+
 export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientProps) {
   const router = useRouter();
   const [decks, setDecks] = useState<DeckSummary[]>(initialDecks);
@@ -62,11 +108,28 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [dragFeedback, setDragFeedback] = useState<string | null>(null);
 
-  const totalCards = useMemo(
-    () => workingDeck.cards.reduce((sum, entry) => sum + entry.quantity, 0),
+  const legendCard = useMemo(
+    () => workingDeck.cards.find((card) => card.section === "legend"),
     [workingDeck.cards]
   );
+
+  const sectionTotals = useMemo(() => {
+    const totals: Record<DeckSection, number> = {
+      legend: 0,
+      main: 0,
+      runes: 0,
+      battlefields: 0,
+      side: 0,
+    };
+    workingDeck.cards.forEach((card) => {
+      totals[card.section] += card.quantity;
+    });
+    return totals;
+  }, [workingDeck.cards]);
+
+  const validation = useMemo(() => validateDeckRules(workingDeck.cards), [workingDeck.cards]);
 
   useEffect(() => {
     let active = true;
@@ -74,8 +137,8 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const timeout = setTimeout(async () => {
       setSearching(true);
       const endpoint = searchTerm
-        ? `/api/cards/search?query=${encodeURIComponent(searchTerm)}&size=24`
-        : "/api/cards?size=24";
+        ? `/api/cards/search?query=${encodeURIComponent(searchTerm)}&size=50`
+        : "/api/cards?size=50";
       try {
         const response = await fetch(endpoint, { signal: controller.signal });
         if (!response.ok) {
@@ -105,7 +168,11 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
 
   useEffect(() => {
     const missingIds = Array.from(
-      new Set(workingDeck.cards.filter((entry) => !entry.card).map((entry) => entry.cardId))
+      new Set(
+        workingDeck.cards
+          .filter((entry) => !entry.card)
+          .map((entry) => entry.cardId)
+      )
     );
 
     if (missingIds.length === 0) {
@@ -147,9 +214,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             cardMap.has(entry.cardId) ? { ...entry, card: cardMap.get(entry.cardId) } : entry
           ),
         }));
-      } catch (error) {
+      } catch (fetchError) {
         if (!cancelled) {
-          console.error(error);
+          console.error(fetchError);
         }
       }
     })();
@@ -171,66 +238,218 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     setError(null);
   }
 
-  function handleAddCard(card: RiftCard) {
-    setError(null);
+  function upsertEntry(card: DeckCardEntry) {
     setWorkingDeck((prev) => {
-      const existingIndex = prev.cards.findIndex((entry) => entry.cardId === card.id);
+      const existingIndex = prev.cards.findIndex(
+        (entry) => entry.cardId === card.cardId && entry.section === card.section
+      );
+
       if (existingIndex >= 0) {
         const existing = prev.cards[existingIndex];
-        if (existing.quantity >= MAX_CARD_COPIES) {
+        const maxQuantity = card.section === "battlefields" ? 1 : MAX_CARD_COPIES;
+        const nextQuantity = Math.min(maxQuantity, existing.quantity + card.quantity);
+        if (nextQuantity === existing.quantity) {
           return prev;
         }
-        const nextCards = prev.cards.map((entry, index) =>
-          index === existingIndex ? { ...entry, quantity: entry.quantity + 1, card } : entry
-        );
+        const nextCards = [...prev.cards];
+        nextCards[existingIndex] = { ...existing, quantity: nextQuantity, card: card.card ?? existing.card };
         setDirty(true);
         return { ...prev, cards: nextCards };
       }
 
-      const nextEntry: DeckCardEntry = {
-        cardId: card.id,
-        cardName: card.name,
-        cardPublicCode: card.public_code,
-        quantity: 1,
-        card,
-      };
       setDirty(true);
-      return { ...prev, cards: [...prev.cards, nextEntry] };
+      return { ...prev, cards: [...prev.cards, card] };
     });
   }
 
-  function adjustQuantity(cardId: string, delta: number) {
+  type CardLike = RiftCard | DeckCardEntry;
+
+  function cardDomains(card: CardLike) {
+    if ("classification" in card) {
+      return card.classification?.domain ?? [];
+    }
+    return card.cardDomains ?? [];
+  }
+
+  function cardType(card: CardLike) {
+    if ("classification" in card) {
+      return card.classification?.type ?? "";
+    }
+    return card.cardType ?? "";
+  }
+
+  function cardSupertype(card: CardLike) {
+    if ("classification" in card) {
+      return card.classification?.supertype ?? "";
+    }
+    return card.cardSupertype ?? "";
+  }
+
+  function canAddToSection(card: CardLike, section: DeckSection, quantity = 1): string | null {
+    if (section === "legend") {
+      if (sectionTotals.legend >= SECTION_TARGETS.legend) {
+        return "Legend slot already filled.";
+      }
+      return null;
+    }
+
+    if (section === "runes") {
+      if (!legendCard) {
+        return "Pick a legend before adding runes.";
+      }
+      const type = cardType(card).toLowerCase();
+      if (!type.includes("rune")) {
+        return "Only Rune cards can be added here.";
+      }
+      const remaining = SECTION_TARGETS.runes - sectionTotals.runes;
+      if (remaining < quantity) {
+        return "Rune capacity reached.";
+      }
+      const runeDomains = cardDomains(card);
+      const legendDomains = legendCard.cardDomains ?? [];
+      const invalidDomain = runeDomains.find((domain) => !legendDomains.includes(domain));
+      if (invalidDomain) {
+        return "Rune colors must match your legend.";
+      }
+      return null;
+    }
+
+    if (section === "battlefields") {
+      const type = cardType(card).toLowerCase();
+      if (!type.includes("battlefield")) {
+        return "Only Battlefield cards belong here.";
+      }
+      if (sectionTotals.battlefields >= SECTION_TARGETS.battlefields) {
+        return "You already have 3 battlefields.";
+      }
+      return null;
+    }
+
+    if (section === "side") {
+      if (sectionTotals.side + quantity > SECTION_TARGETS.side) {
+        return "Side deck limit reached.";
+      }
+      return null;
+    }
+
+    if (section === "main") {
+      if (sectionTotals.main + quantity > SECTION_TARGETS.main) {
+        return "Main deck is capped at 40 cards.";
+      }
+      return null;
+    }
+
+    return "Invalid section";
+  }
+
+  function setLegend(card: RiftCard) {
+    if (!isChampion(card)) {
+      setError("Legends must be champion units.");
+      return;
+    }
+    setError(null);
     setWorkingDeck((prev) => {
-      let changed = false;
-      const next = prev.cards.map((entry) => {
-        if (entry.cardId !== cardId) {
-          return entry;
-        }
-        const nextQuantity = Math.min(
-          MAX_CARD_COPIES,
-          Math.max(1, entry.quantity + delta)
-        );
-        if (nextQuantity !== entry.quantity) {
-          changed = true;
-        }
-        return { ...entry, quantity: nextQuantity };
-      });
-      if (!changed) {
+      const filtered = prev.cards.filter((entry) => entry.section !== "legend");
+      return {
+        ...prev,
+        cards: [...filtered, createEntry(card, "legend", 1)],
+      };
+    });
+    setDirty(true);
+  }
+
+  function addCardToSection(card: RiftCard, section: DeckSection) {
+    const guard = canAddToSection(card, section);
+    if (guard) {
+      setError(guard);
+      return;
+    }
+    setError(null);
+    const entry = createEntry(card, section, section === "legend" ? 1 : 1);
+    upsertEntry(entry);
+  }
+
+  function adjustQuantity(cardId: string, section: DeckSection, delta: number) {
+    setWorkingDeck((prev) => {
+      const index = prev.cards.findIndex(
+        (entry) => entry.cardId === cardId && entry.section === section
+      );
+      if (index === -1) {
         return prev;
       }
+
+      const entry = prev.cards[index];
+      const maxQuantity = section === "battlefields" ? 1 : MAX_CARD_COPIES;
+      const nextQuantity = Math.min(
+        maxQuantity,
+        Math.max(1, entry.quantity + delta)
+      );
+
+      if (section !== "main" && sectionTotals[section] - entry.quantity + nextQuantity > SECTION_TARGETS[section]) {
+        return prev;
+      }
+
+      if (nextQuantity === entry.quantity) {
+        return prev;
+      }
+
+      const nextCards = [...prev.cards];
+      nextCards[index] = { ...entry, quantity: nextQuantity };
       setDirty(true);
-      return { ...prev, cards: next };
+      return { ...prev, cards: nextCards };
     });
   }
 
-  function removeCard(cardId: string) {
+  function removeCard(cardId: string, section: DeckSection) {
     setWorkingDeck((prev) => {
-      const next = prev.cards.filter((entry) => entry.cardId !== cardId);
+      const next = prev.cards.filter(
+        (entry) => !(entry.cardId === cardId && entry.section === section)
+      );
       if (next.length === prev.cards.length) {
         return prev;
       }
       setDirty(true);
       return { ...prev, cards: next };
+    });
+  }
+
+  function moveCard(cardId: string, fromSection: DeckSection, toSection: DeckSection) {
+    if (fromSection === toSection) {
+      return;
+    }
+    setWorkingDeck((prev) => {
+      const index = prev.cards.findIndex(
+        (entry) => entry.cardId === cardId && entry.section === fromSection
+      );
+      if (index === -1) {
+        return prev;
+      }
+
+      const entry = prev.cards[index];
+      const guard = canAddToSection(entry, toSection, entry.quantity);
+      if (guard) {
+        setError(guard);
+        return prev;
+      }
+
+      const filtered = prev.cards.filter((_, idx) => idx !== index);
+      const existingIndex = filtered.findIndex(
+        (item) => item.cardId === cardId && item.section === toSection
+      );
+
+      if (existingIndex >= 0) {
+        const existing = filtered[existingIndex];
+        const maxQuantity = toSection === "battlefields" ? 1 : MAX_CARD_COPIES;
+        filtered[existingIndex] = {
+          ...existing,
+          quantity: Math.min(maxQuantity, existing.quantity + entry.quantity),
+        };
+      } else {
+        filtered.push({ ...entry, section: toSection });
+      }
+
+      setDirty(true);
+      return { ...prev, cards: filtered };
     });
   }
 
@@ -248,6 +467,10 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         cardName: card.cardName,
         cardPublicCode: card.cardPublicCode,
         quantity: card.quantity,
+        section: card.section,
+        cardDomains: card.cardDomains,
+        cardSupertype: card.cardSupertype ?? card.card?.classification?.supertype ?? null,
+        cardType: card.cardType ?? card.card?.classification?.type ?? null,
       })),
     };
 
@@ -278,18 +501,127 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     setSaveStatus("Saved");
     setDirty(false);
     router.refresh();
-    setTimeout(() => setSaveStatus(null), 2500);
+    setTimeout(() => setSaveStatus(null), 2000);
   }
 
-  const deckStats = useMemo(() => {
-    const byDomain = new Map<string, number>();
-    workingDeck.cards.forEach((entry) => {
-      (entry.card?.classification?.domain ?? []).forEach((domain) => {
-        byDomain.set(domain, (byDomain.get(domain) ?? 0) + entry.quantity);
-      });
-    });
-    return Array.from(byDomain.entries()).sort((a, b) => b[1] - a[1]);
-  }, [workingDeck.cards]);
+  function renderCardRow(entry: DeckCardEntry) {
+    const canDrag = entry.section === "main" || entry.section === "side";
+    return (
+      <div
+        key={`${entry.cardId}-${entry.section}`}
+        className="flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-900/50 p-3"
+        draggable={canDrag}
+        onDragStart={(event) => {
+          if (!canDrag) return;
+          event.dataTransfer.setData(
+            DRAG_MIME,
+            JSON.stringify({ cardId: entry.cardId, section: entry.section })
+          );
+          event.dataTransfer.effectAllowed = "move";
+          setDragFeedback(
+            entry.section === "main" ? "Drag to side deck" : "Drag to main deck"
+          );
+        }}
+        onDragEnd={() => setDragFeedback(null)}
+      >
+        <div className="h-16 w-12 overflow-hidden rounded-lg bg-slate-800">
+          {entry.card?.media.image_url && (
+            <Image
+              src={entry.card.media.image_url}
+              alt={entry.card?.name ?? entry.cardName}
+              width={80}
+              height={112}
+              className="h-full w-full object-cover"
+            />
+          )}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-semibold">{entry.cardName}</p>
+          <p className="text-xs text-slate-400">
+            {entry.card?.classification?.type ?? entry.cardType ?? "Unknown"} · {entry.card?.classification?.rarity ?? ""}
+          </p>
+        </div>
+        {entry.section !== "legend" && entry.section !== "battlefields" && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => adjustQuantity(entry.cardId, entry.section, -1)}
+              className="rounded-full border border-white/20 px-2 py-1 text-sm"
+            >
+              -
+            </button>
+            <span className="min-w-[2ch] text-center text-lg font-semibold">{entry.quantity}</span>
+            <button
+              onClick={() => adjustQuantity(entry.cardId, entry.section, 1)}
+              className="rounded-full border border-white/20 px-2 py-1 text-sm"
+            >
+              +
+            </button>
+          </div>
+        )}
+        {entry.section === "battlefields" && (
+          <span className="rounded-full border border-white/20 px-3 py-1 text-xs">1x</span>
+        )}
+        <button
+          onClick={() => removeCard(entry.cardId, entry.section)}
+          className="rounded-full border border-white/20 px-2 py-1 text-xs text-slate-300"
+        >
+          Remove
+        </button>
+      </div>
+    );
+  }
+
+  function renderSection(section: DeckSection, extra?: { droppable?: boolean }) {
+    const cards = workingDeck.cards.filter((card) => card.section === section);
+    const needed = SECTION_TARGETS[section];
+    const count = sectionTotals[section];
+    const isComplete = count === needed;
+    const droppable = extra?.droppable;
+
+    return (
+      <div
+        key={section}
+        className={`rounded-2xl border p-4 ${
+          isComplete ? "border-white/10 bg-slate-900/60" : "border-amber-400/40 bg-amber-500/5"
+        }`}
+        onDragOver={(event) => {
+          if (!droppable) return;
+          if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (!droppable) return;
+          if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+          event.preventDefault();
+          const raw = event.dataTransfer.getData(DRAG_MIME);
+          try {
+            const payload = JSON.parse(raw) as { cardId: string; section: DeckSection };
+            moveCard(payload.cardId, payload.section, section);
+          } catch (dropError) {
+            console.error(dropError);
+          }
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">{SECTION_LABELS[section]}</p>
+            <p className="text-sm text-slate-400">{SECTION_HINTS[section]}</p>
+          </div>
+          <span className="text-sm font-semibold">
+            {count}/{needed}
+          </span>
+        </div>
+        <div className="mt-3 space-y-3">
+          {cards.length === 0 && (
+            <p className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-xs text-slate-400">
+              Empty slot
+            </p>
+          )}
+          {cards.map((card) => renderCardRow(card))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 px-4 py-10 text-white">
@@ -371,6 +703,13 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
                 />
                 <span>Make deck public</span>
               </label>
+              <button
+                onClick={saveDeck}
+                disabled={workingDeck.name.trim().length === 0 || validation.errors.length > 0 || !dirty}
+                className="rounded-xl bg-emerald-500/80 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
+              >
+                {saveStatus ?? (workingDeck.id ? "Save changes" : "Save deck")}
+              </button>
             </div>
           </header>
 
@@ -385,86 +724,40 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             rows={3}
           />
 
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
-            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Total Cards</p>
-              <p className="text-3xl font-semibold">{totalCards}</p>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Domains</p>
-              <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                {deckStats.length === 0 && <span className="text-slate-400">Add cards to analyze domains.</span>}
-                {deckStats.map(([domain, count]) => (
-                  <span key={domain} className="rounded-full bg-white/10 px-3 py-1">
-                    {domain} · {count}
-                  </span>
-                ))}
-              </div>
-            </div>
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            {renderSection("legend")}
+            {renderSection("battlefields")}
+            {renderSection("runes")}
+            {renderSection("side", { droppable: true })}
           </div>
 
-          <div className="mt-6">
+          <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/60 p-4" onDragOver={(event) => {
+            if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+            event.preventDefault();
+          }} onDrop={(event) => {
+            if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+            event.preventDefault();
+            const raw = event.dataTransfer.getData(DRAG_MIME);
+            try {
+              const payload = JSON.parse(raw) as { cardId: string; section: DeckSection };
+              moveCard(payload.cardId, payload.section, "main");
+            } catch (dropError) {
+              console.error(dropError);
+            }
+          }}>
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold">Mainboard</h3>
-              <button
-                onClick={saveDeck}
-                disabled={workingDeck.name.trim().length === 0 || !dirty}
-                className="rounded-xl bg-emerald-500/80 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
-              >
-                {saveStatus ?? (workingDeck.id ? "Save changes" : "Save deck")}
-              </button>
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">Main Deck</p>
+                <p className="text-sm text-slate-400">{SECTION_HINTS.main}</p>
+              </div>
+              <span className="text-sm font-semibold">
+                {sectionTotals.main}/{SECTION_TARGETS.main}
+              </span>
             </div>
-            <div className="mt-4 space-y-3">
-              {workingDeck.cards.length === 0 && (
-                <p className="rounded-2xl border border-dashed border-white/10 px-4 py-6 text-center text-sm text-slate-400">
-                  Search cards on the right and add them to your list.
-                </p>
-              )}
-              {workingDeck.cards.map((entry) => (
-                <div
-                  key={entry.cardId}
-                  className="flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-900/50 p-3"
-                >
-                  <div className="h-16 w-12 overflow-hidden rounded-lg bg-slate-800">
-                    {entry.card?.media.image_url && (
-                      <Image
-                        src={entry.card.media.image_url}
-                        alt={entry.card.name}
-                        width={80}
-                        height={112}
-                        className="h-full w-full object-cover"
-                      />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold">{entry.cardName}</p>
-                    <p className="text-xs text-slate-400">
-                      {entry.card?.classification?.type ?? "Unknown"} · {entry.card?.classification?.rarity ?? "?"}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => adjustQuantity(entry.cardId, -1)}
-                      className="rounded-full border border-white/20 px-2 py-1 text-sm"
-                    >
-                      -
-                    </button>
-                    <span className="min-w-[2ch] text-center text-lg font-semibold">{entry.quantity}</span>
-                    <button
-                      onClick={() => adjustQuantity(entry.cardId, 1)}
-                      className="rounded-full border border-white/20 px-2 py-1 text-sm"
-                    >
-                      +
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => removeCard(entry.cardId)}
-                    className="rounded-full border border-white/20 px-2 py-1 text-xs text-slate-300"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
+            <div className="mt-3 space-y-3">
+              {workingDeck.cards
+                .filter((card) => card.section === "main")
+                .map((card) => renderCardRow(card))}
             </div>
           </div>
 
@@ -472,6 +765,18 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             <p className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
               {error}
             </p>
+          )}
+          {validation.errors.length > 0 && (
+            <ul className="mt-4 space-y-2 text-sm text-amber-200">
+              {validation.errors.map((message) => (
+                <li key={message} className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                  {message}
+                </li>
+              ))}
+            </ul>
+          )}
+          {dragFeedback && (
+            <p className="mt-4 text-center text-xs text-slate-400">{dragFeedback}</p>
           )}
         </section>
 
@@ -489,31 +794,63 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           <div className="mt-4 h-[70vh] space-y-3 overflow-y-auto pr-2">
             {searching && <p className="text-xs text-slate-400">Loading cards...</p>}
             {searchResults.map((card) => (
-              <button
+              <div
                 key={card.id}
-                onClick={() => handleAddCard(card)}
-                className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-left hover:border-cyan-400/60"
+                className="rounded-2xl border border-white/10 bg-white/5 p-3"
               >
-                <div className="h-20 w-14 overflow-hidden rounded-lg bg-slate-800">
-                  {card.media.image_url && (
-                    <Image
-                      src={card.media.image_url}
-                      alt={card.name}
-                      width={90}
-                      height={128}
-                      className="h-full w-full object-cover"
-                    />
-                  )}
+                <div className="flex items-center gap-3">
+                  <div className="h-20 w-14 overflow-hidden rounded-lg bg-slate-800">
+                    {card.media.image_url && (
+                      <Image
+                        src={card.media.image_url}
+                        alt={card.name}
+                        width={90}
+                        height={128}
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold">{card.name}</p>
+                    <p className="text-xs text-slate-400">
+                      {card.classification?.type ?? ""} · {(card.classification?.domain ?? []).join(", ")}
+                    </p>
+                    <p className="text-xs text-slate-500 line-clamp-2">{card.text.plain}</p>
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <p className="text-sm font-semibold">{card.name}</p>
-                  <p className="text-xs text-slate-400">
-                    {card.classification?.type ?? ""} · {(card.classification?.domain ?? []).join(", ")}
-                  </p>
-                  <p className="text-xs text-slate-500 line-clamp-2">{card.text.plain}</p>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <button
+                    onClick={() => addCardToSection(card, "main")}
+                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
+                  >
+                    Add to Main
+                  </button>
+                  <button
+                    onClick={() => addCardToSection(card, "side")}
+                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
+                  >
+                    Add to Side
+                  </button>
+                  <button
+                    onClick={() => addCardToSection(card, "runes")}
+                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
+                  >
+                    Add Rune
+                  </button>
+                  <button
+                    onClick={() => addCardToSection(card, "battlefields")}
+                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
+                  >
+                    Add Battlefield
+                  </button>
+                  <button
+                    onClick={() => setLegend(card)}
+                    className="col-span-2 rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
+                  >
+                    Set as Legend
+                  </button>
                 </div>
-                <span className="rounded-full bg-cyan-500/20 px-3 py-1 text-xs text-cyan-200">Add</span>
-              </button>
+              </div>
             ))}
           </div>
         </aside>

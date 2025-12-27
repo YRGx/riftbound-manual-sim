@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/src/lib/supabaseServer";
-import { mapDeckRow, normalizeDeckPayload } from "@/src/lib/decks";
+import { mapDeckRow, normalizeDeckPayload, validateDeckRules } from "@/src/lib/decks";
 import type { DeckSummary } from "@/src/types/deck";
 
 export async function POST(request: NextRequest) {
@@ -26,6 +26,11 @@ export async function POST(request: NextRequest) {
   }
 
   const normalized = normalizeDeckPayload(payload);
+
+  const ruleCheck = validateDeckRules(normalized.cards ?? []);
+  if (ruleCheck.errors.length > 0) {
+    return NextResponse.json({ error: ruleCheck.errors.join(" ") }, { status: 400 });
+  }
 
   const { data: deckRow, error } = await supabase
     .from("decks")
@@ -54,6 +59,10 @@ export async function POST(request: NextRequest) {
       card_name: card.cardName,
       card_public_code: card.cardPublicCode ?? null,
       quantity: card.quantity,
+      section: card.section,
+      card_domains: card.cardDomains ?? [],
+      card_supertype: card.cardSupertype ?? null,
+      card_type: card.cardType ?? null,
     }));
 
     const { error: cardsError } = await supabase.from("deck_cards").insert(rows);
@@ -68,7 +77,7 @@ export async function POST(request: NextRequest) {
   const { data: fullDeckRow, error: fetchError } = await supabase
     .from("decks")
     .select(
-      "id, owner_id, name, description, format, cover_card_id, is_public, created_at, updated_at, deck_cards(card_id, card_name, card_public_code, quantity)"
+      "id, owner_id, name, description, format, cover_card_id, is_public, created_at, updated_at, deck_cards(card_id, card_name, card_public_code, quantity, section, card_domains, card_supertype, card_type)"
     )
     .eq("id", deckRow.id)
     .single();
