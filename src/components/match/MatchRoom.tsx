@@ -12,6 +12,7 @@ import type {
   PlayerState,
   ZoneKey,
 } from "@/src/types/match";
+import styles from "./MatchRoom.module.css";
 
 interface MatchRoomProps {
   match: MatchSummary;
@@ -26,16 +27,66 @@ interface DropPayload {
   fromZone: ZoneKey;
 }
 
-export default function MatchRoom({
-  match,
-  initialState,
-  initialEvents,
-  currentUserId,
-}: MatchRoomProps) {
+type BoardZoneVariant = "small" | "long";
+
+interface LayoutZone {
+  label: string;
+  variant: BoardZoneVariant;
+  zoneKey?: ZoneKey;
+}
+
+interface PlayerMatLayout {
+  left: LayoutZone[];
+  center: LayoutZone[];
+  right: LayoutZone[];
+}
+
+const BOARD_BASE_HEIGHT = 900;
+const HEADER_RESERVE = 140;
+const MIN_BOARD_SCALE = 0.7;
+
+const PLAYER_MAT_LAYOUT: Record<"top" | "bottom", PlayerMatLayout> = {
+  top: {
+    left: [
+      { label: "Trash", variant: "small", zoneKey: "discard" },
+      { label: "Runes Deck", variant: "small" },
+    ],
+    center: [
+      { label: "Runes", variant: "long", zoneKey: "hand" },
+      { label: "Base", variant: "long" },
+      { label: "Battlefield", variant: "long", zoneKey: "battlefield" },
+    ],
+    right: [
+      { label: "Main Deck", variant: "small", zoneKey: "deck" },
+      { label: "Champion", variant: "small" },
+      { label: "Legend", variant: "small" },
+    ],
+  },
+  bottom: {
+    left: [
+      { label: "Champion", variant: "small" },
+      { label: "Legend", variant: "small" },
+    ],
+    center: [
+      { label: "Battlefield", variant: "long", zoneKey: "battlefield" },
+      { label: "Base", variant: "long" },
+      { label: "Runes", variant: "long", zoneKey: "hand" },
+    ],
+    right: [
+      { label: "Main Deck", variant: "small", zoneKey: "deck" },
+      { label: "Trash", variant: "small", zoneKey: "discard" },
+      { label: "Runes Deck", variant: "small" },
+    ],
+  },
+};
+
+export default function MatchRoom({ match, initialState, initialEvents, currentUserId }: MatchRoomProps) {
   const router = useRouter();
   const [state, setState] = useState<MatchState>(initialState);
   const [events, setEvents] = useState<MatchEventRecord[]>(initialEvents);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [logOpen, setLogOpen] = useState(false);
+  const [boardScale, setBoardScale] = useState(1);
 
   const viewerSlot: PlayerSlot | null = useMemo(() => {
     if (match.player1_id === currentUserId) return "p1";
@@ -43,8 +94,9 @@ export default function MatchRoom({
     return null;
   }, [match.player1_id, match.player2_id, currentUserId]);
 
-  const leftSlot: PlayerSlot = viewerSlot ?? "p1";
-  const rightSlot: PlayerSlot = leftSlot === "p1" ? "p2" : "p1";
+  const bottomSlot: PlayerSlot = viewerSlot ?? "p1";
+  const topSlot: PlayerSlot = bottomSlot === "p1" ? "p2" : "p1";
+  const canControl = Boolean(viewerSlot);
 
   useEffect(() => {
     const channel = supabase
@@ -69,6 +121,24 @@ export default function MatchRoom({
       supabase.removeChannel(channel);
     };
   }, [match.id]);
+
+  useEffect(() => {
+    function syncScale() {
+      if (typeof window === "undefined") {
+        return;
+      }
+      const available = window.innerHeight - HEADER_RESERVE;
+      const ratio = available / BOARD_BASE_HEIGHT;
+      const nextScale = Math.min(1, Math.max(MIN_BOARD_SCALE, ratio));
+      setBoardScale(Number.isFinite(nextScale) ? nextScale : 1);
+    }
+
+    syncScale();
+    window.addEventListener("resize", syncScale);
+    return () => {
+      window.removeEventListener("resize", syncScale);
+    };
+  }, []);
 
   async function runAction(type: string, payload?: Record<string, unknown>) {
     setActionError(null);
@@ -107,101 +177,102 @@ export default function MatchRoom({
     );
   }
 
-  const canControl = Boolean(viewerSlot);
-
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-8">
-      <header className="flex flex-col gap-4 rounded-2xl border border-white/5 bg-slate-900/70 p-6 shadow-xl backdrop-blur md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm uppercase tracking-[0.4em] text-cyan-400">Match Code</p>
-          <div className="flex items-center gap-4">
-            <h1 className="text-4xl font-extrabold tracking-[0.3em]">{match.code}</h1>
-            <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white/80">
-              {viewerSlot ? (viewerSlot === "p1" ? "Player 1" : "Player 2") : "Spectator"}
-            </span>
-          </div>
-          <p className="mt-2 text-sm text-slate-300">
-            Turn: <span className="font-semibold text-white">{state.turn === viewerSlot ? "You" : state.turn.toUpperCase()}</span>
-            <span className="ml-3 text-xs uppercase tracking-widest text-slate-400">Phase: {state.phase}</span>
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={() => router.push("/lobby")}
-            className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white hover:border-cyan-400"
-          >
+    <main className={styles.page}>
+      <header className={styles.matchHeader}>
+        <div className={styles.headerButtons}>
+          <button onClick={() => router.push("/lobby")} className={styles.secondaryButton}>
             Back to Lobby
           </button>
           {viewerSlot && (
-            <button
-              onClick={() => runAction("end-turn")}
-              className="rounded-xl bg-emerald-500/80 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400"
-            >
+            <button onClick={() => runAction("end-turn")} className={styles.primaryButton}>
               End Turn
             </button>
           )}
         </div>
       </header>
 
-      <div className="grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <section className="space-y-6">
-          <PlayerBoard
-            slot={leftSlot}
-            viewerSlot={viewerSlot}
-            player={state.players[leftSlot]}
-            canControl={canControl}
-            onDraw={() => runAction("draw-card", { player: leftSlot })}
-            onShuffle={() => runAction("shuffle-deck", { player: leftSlot })}
-            onMulligan={() => runAction("mulligan", { player: leftSlot })}
-            onLife={(delta) => runAction("life-change", { player: leftSlot, delta })}
-            onDrop={handleDrop}
-            onDragStart={handleDragStart}
-          />
+      <div className={styles.stage}>
+        <div className={styles.boardViewport} style={{ height: BOARD_BASE_HEIGHT * boardScale }}>
+          <section
+            className={styles.boardShell}
+            style={{
+              height: BOARD_BASE_HEIGHT,
+              ...(boardScale < 1
+                ? { transform: `scale(${boardScale})`, transformOrigin: "center top" }
+                : {}),
+            }}
+          >
+            <div className={styles.board}>
+            <PlayerMat
+              variant="top"
+              slot={topSlot}
+              viewerSlot={viewerSlot}
+              player={state.players[topSlot]}
+              canControl={canControl}
+              onDraw={() => runAction("draw-card", { player: topSlot })}
+              onShuffle={() => runAction("shuffle-deck", { player: topSlot })}
+              onMulligan={() => runAction("mulligan", { player: topSlot })}
+              onLife={(delta) => runAction("life-change", { player: topSlot, delta })}
+              onDrop={handleDrop}
+              onDragStart={handleDragStart}
+            />
 
-          <PlayerBoard
-            slot={rightSlot}
-            viewerSlot={viewerSlot}
-            player={state.players[rightSlot]}
-            canControl={canControl}
-            onDraw={() => runAction("draw-card", { player: rightSlot })}
-            onShuffle={() => runAction("shuffle-deck", { player: rightSlot })}
-            onMulligan={() => runAction("mulligan", { player: rightSlot })}
-            onLife={(delta) => runAction("life-change", { player: rightSlot, delta })}
-            onDrop={handleDrop}
-            onDragStart={handleDragStart}
-          />
-        </section>
+            <div className={styles.centerField}>RIFTBOUND ARENA</div>
 
-        <aside className="flex flex-col gap-6">
-          <div className="rounded-2xl border border-white/5 bg-slate-900/80 p-5">
-            <h2 className="text-lg font-semibold">Game Log</h2>
-            <div className="mt-4 space-y-3 overflow-y-auto text-sm max-h-[60vh] pr-2">
-              {events.length === 0 && (
-                <p className="text-slate-400">Actions will appear here.</p>
-              )}
-              {events.map((event) => (
-                <div key={event.id} className="rounded-lg border border-white/5 bg-white/5 p-3">
-                  <p className="font-medium">{describeEvent(event)}</p>
-                  <p className="text-xs text-slate-400">
-                    {new Date(event.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                </div>
-              ))}
-            </div>
+            <PlayerMat
+              variant="bottom"
+              slot={bottomSlot}
+              viewerSlot={viewerSlot}
+              player={state.players[bottomSlot]}
+              canControl={canControl}
+              onDraw={() => runAction("draw-card", { player: bottomSlot })}
+              onShuffle={() => runAction("shuffle-deck", { player: bottomSlot })}
+              onMulligan={() => runAction("mulligan", { player: bottomSlot })}
+              onLife={(delta) => runAction("life-change", { player: bottomSlot, delta })}
+              onDrop={handleDrop}
+              onDragStart={handleDragStart}
+            />
           </div>
 
-          {actionError && (
-            <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-              {actionError}
-            </p>
-          )}
+          {actionError && <p className={styles.errorBanner}>{actionError}</p>}
+          </section>
+        </div>
+
+        <button
+          type="button"
+          className={`${styles.logTab} ${logOpen ? styles.logTabOpen : ""}`}
+          onClick={() => setLogOpen((prev) => !prev)}
+        >
+          Log
+        </button>
+
+        <aside className={`${styles.logDrawer} ${logOpen ? styles.logDrawerOpen : ""}`}>
+          <div className={styles.logHeader}>
+            <h2>Game Log</h2>
+            <button type="button" className={styles.closeDrawer} onClick={() => setLogOpen(false)}>
+              Close
+            </button>
+          </div>
+          <div className={styles.logScroll}>
+            {events.length === 0 && <p className={styles.emptyLog}>Actions will appear here.</p>}
+            {events.map((event) => (
+              <div key={event.id} className={styles.logEntry}>
+                <p>{describeEvent(event)}</p>
+                <p className={styles.logTimestamp}>
+                  {new Date(event.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </p>
+              </div>
+            ))}
+          </div>
         </aside>
       </div>
     </main>
   );
 }
 
-interface PlayerBoardProps {
+interface PlayerMatProps {
+  variant: "top" | "bottom";
   slot: PlayerSlot;
   viewerSlot: PlayerSlot | null;
   player: PlayerState;
@@ -219,7 +290,8 @@ interface PlayerBoardProps {
   ) => void;
 }
 
-function PlayerBoard({
+function PlayerMat({
+  variant,
   slot,
   viewerSlot,
   player,
@@ -230,118 +302,107 @@ function PlayerBoard({
   onLife,
   onDrop,
   onDragStart,
-}: PlayerBoardProps) {
+}: PlayerMatProps) {
+  const layout = PLAYER_MAT_LAYOUT[variant];
   const label = viewerSlot === slot ? "You" : slot === "p1" ? "Player One" : "Player Two";
   const controlsEnabled = canControl && viewerSlot === slot;
+  const playerClass = [styles.player, variant === "top" ? styles.playerTop : ""].filter(Boolean).join(" ");
 
   return (
-    <div className="space-y-4 rounded-2xl border border-white/5 bg-slate-950/60 p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div className={styles.playerShell}>
+      <div className={styles.playerHeader}>
         <div>
-          <p className="text-sm uppercase tracking-widest text-slate-400">{slot.toUpperCase()}</p>
-          <h2 className="text-2xl font-bold">{label}</h2>
+          <p className={styles.playerSlot}>{slot.toUpperCase()}</p>
+          <h2>{label}</h2>
+          <p className={styles.playerCounts}>
+            Deck {player.zones.deck.length} | Hand {player.zones.hand.length}
+          </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2">
+        <div className={styles.playerControls}>
+          <div className={styles.lifeDial}>
             <button
               disabled={!controlsEnabled}
               onClick={() => onLife(-1)}
-              className="rounded bg-white/10 px-2 py-1 text-lg disabled:opacity-40"
+              className={styles.lifeButton}
             >
               -
             </button>
-            <span className="text-3xl font-black text-emerald-300">{player.life}</span>
+            <span className={styles.lifeValue}>{player.life}</span>
             <button
               disabled={!controlsEnabled}
               onClick={() => onLife(1)}
-              className="rounded bg-white/10 px-2 py-1 text-lg disabled:opacity-40"
+              className={styles.lifeButton}
             >
               +
             </button>
           </div>
-          <div className="text-sm text-slate-300">
-            <p>Deck: {player.zones.deck.length}</p>
-            <p>Hand: {player.zones.hand.length}</p>
+          <div className={styles.actionButtons}>
+            <button onClick={onDraw} disabled={!controlsEnabled} className={styles.actionButton}>
+              Draw
+            </button>
+            <button onClick={onShuffle} disabled={!controlsEnabled} className={styles.actionButton}>
+              Shuffle
+            </button>
+            <button onClick={onMulligan} disabled={!controlsEnabled} className={styles.actionButton}>
+              Mulligan
+            </button>
           </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          onClick={onDraw}
-          disabled={!controlsEnabled}
-          className="rounded-xl bg-cyan-500/80 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40"
-        >
-          Draw
-        </button>
-        <button
-          onClick={onShuffle}
-          disabled={!controlsEnabled}
-          className="rounded-xl bg-blue-500/80 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40"
-        >
-          Shuffle
-        </button>
-        <button
-          onClick={onMulligan}
-          disabled={!controlsEnabled}
-          className="rounded-xl bg-amber-500/80 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40"
-        >
-          Mulligan
-        </button>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <Zone
-          title="Deck"
-          slot={slot}
-          zoneKey="deck"
-          cards={player.zones.deck}
-          viewerSlot={viewerSlot}
-          canControl={controlsEnabled}
-          onDrop={onDrop}
-          onDragStart={onDragStart}
-        />
-        <Zone
-          title="Hand"
-          slot={slot}
-          zoneKey="hand"
-          cards={player.zones.hand}
-          viewerSlot={viewerSlot}
-          canControl={controlsEnabled}
-          onDrop={onDrop}
-          onDragStart={onDragStart}
-        />
-        <Zone
-          title="Battlefield"
-          slot={slot}
-          zoneKey="battlefield"
-          cards={player.zones.battlefield}
-          viewerSlot={viewerSlot}
-          canControl={controlsEnabled}
-          onDrop={onDrop}
-          onDragStart={onDragStart}
-        />
-        <Zone
-          title="Discard"
-          slot={slot}
-          zoneKey="discard"
-          cards={player.zones.discard}
-          viewerSlot={viewerSlot}
-          canControl={controlsEnabled}
-          onDrop={onDrop}
-          onDragStart={onDragStart}
-        />
+      <div className={playerClass}>
+        <div className={styles.sideColumn}>
+          {layout.left.map((config, index) => (
+            <BoardZone
+              key={`left-${config.label}-${index}`}
+              config={config}
+              slot={slot}
+              viewerSlot={viewerSlot}
+              player={player}
+              canControl={controlsEnabled}
+              onDrop={onDrop}
+              onDragStart={onDragStart}
+            />
+          ))}
+        </div>
+        <div className={styles.mainColumn}>
+          {layout.center.map((config, index) => (
+            <BoardZone
+              key={`center-${config.label}-${index}`}
+              config={config}
+              slot={slot}
+              viewerSlot={viewerSlot}
+              player={player}
+              canControl={controlsEnabled}
+              onDrop={onDrop}
+              onDragStart={onDragStart}
+            />
+          ))}
+        </div>
+        <div className={styles.sideColumn}>
+          {layout.right.map((config, index) => (
+            <BoardZone
+              key={`right-${config.label}-${index}`}
+              config={config}
+              slot={slot}
+              viewerSlot={viewerSlot}
+              player={player}
+              canControl={controlsEnabled}
+              onDrop={onDrop}
+              onDragStart={onDragStart}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-interface ZoneProps {
-  title: string;
+interface BoardZoneProps {
+  config: LayoutZone;
   slot: PlayerSlot;
-  zoneKey: ZoneKey;
-  cards: MatchCard[];
   viewerSlot: PlayerSlot | null;
+  player: PlayerState;
   canControl: boolean;
   onDrop: (slot: PlayerSlot, zone: ZoneKey, event: DragEvent<HTMLDivElement>) => void;
   onDragStart: (
@@ -352,61 +413,61 @@ interface ZoneProps {
   ) => void;
 }
 
-function Zone({
-  title,
-  slot,
-  zoneKey,
-  cards,
-  viewerSlot,
-  canControl,
-  onDrop,
-  onDragStart,
-}: ZoneProps) {
+function BoardZone({ config, slot, viewerSlot, player, canControl, onDrop, onDragStart }: BoardZoneProps) {
+  const { label, variant, zoneKey } = config;
+  const cards = zoneKey ? player.zones[zoneKey] : [];
   const faceDown = zoneKey === "deck" || (zoneKey === "hand" && viewerSlot !== slot);
-  const showCards = !faceDown;
+  const showCards = Boolean(zoneKey) && !faceDown;
+  const dropEnabled = Boolean(zoneKey) && canControl;
+  const zoneClass = [
+    styles.zone,
+    variant === "small" ? styles.zoneSmall : styles.zoneLong,
+    !zoneKey ? styles.zoneReserved : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div>
-      <div className="flex items-center justify-between text-sm text-slate-300">
-        <h3 className="font-semibold uppercase tracking-wide text-white">{title}</h3>
-        <span>{cards.length}</span>
+    <div
+      className={zoneClass}
+      onDragOver={(event) => {
+        if (dropEnabled) {
+          event.preventDefault();
+        }
+      }}
+      onDrop={(event) => {
+        if (dropEnabled && zoneKey) {
+          onDrop(slot, zoneKey, event);
+        }
+      }}
+    >
+      <div className={styles.zoneLabel}>
+        <span>{label}</span>
+        {zoneKey && <span>{cards.length}</span>}
       </div>
-      <div
-        className={`mt-2 min-h-[120px] rounded-xl border border-dashed border-white/10 bg-slate-900/70 p-3 ${
-          canControl ? "hover:border-cyan-400" : ""
-        }`}
-        onDragOver={(event) => {
-          if (canControl) {
-            event.preventDefault();
-          }
-        }}
-        onDrop={(event) => {
-          if (canControl) {
-            onDrop(slot, zoneKey, event);
-          }
-        }}
-      >
-        {!cards.length && <p className="text-center text-xs text-slate-500">Empty</p>}
-        {showCards ? (
-          <div className="flex flex-wrap gap-2">
+      <div className={styles.zoneBody}>
+        {!zoneKey && <p className={styles.zoneHint}>Reserved</p>}
+        {zoneKey && showCards && cards.length === 0 && <p className={styles.zoneHint}>Empty</p>}
+        {zoneKey && showCards && cards.length > 0 && (
+          <div className={styles.cardStack}>
             {cards.map((card) => (
               <div
                 key={card.uid}
-                draggable={canControl}
-                onDragStart={(event) => onDragStart(event, slot, zoneKey, card)}
-                className={`h-14 w-24 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-2 py-1 text-[11px] leading-tight ${
-                  canControl ? "cursor-grab" : "cursor-not-allowed"
-                }`}
+                draggable={dropEnabled}
+                onDragStart={(event) => zoneKey && onDragStart(event, slot, zoneKey, card)}
+                className={[styles.card, dropEnabled ? styles.cardDraggable : styles.cardDisabled]
+                  .filter(Boolean)
+                  .join(" ")}
               >
-                <p className="font-semibold">{card.name}</p>
-                {card.img && <p className="text-[10px] text-slate-300">Image attached</p>}
+                <p>{card.name}</p>
               </div>
             ))}
           </div>
-        ) : (
-          <div className="flex items-center justify-center gap-2 text-xs text-slate-400">
-            <span className="h-8 w-6 rounded border border-white/20 bg-white/5" />
-            <span>Hidden stack</span>
+        )}
+        {zoneKey && !showCards && (
+          <div className={styles.hiddenStack}>
+            <span />
+            <p>Hidden stack</p>
           </div>
         )}
       </div>
@@ -425,23 +486,22 @@ function describeEvent(event: MatchEventRecord) {
       return `Moved card ${payload.cardUid} from ${formatZone(payload.from)} to ${formatZone(payload.to)}`;
     case "mulligan":
       return `Player ${payload.player ?? "?"} mulliganed their hand`;
-    case "life-change":
+    case "life-change": {
       const delta = Number(payload.delta ?? 0);
       return `Player ${payload.player ?? "?"} ${delta >= 0 ? "gained" : "lost"} ${Math.abs(delta)} life`;
+    }
     case "end-turn":
       return `Turn passed to ${payload.turn}`;
     case "match_created":
       return "Match created";
     case "player_joined":
-      return `Second seat filled`;
+      return "Second seat filled";
     default:
       return event.type;
   }
 }
 
-function formatZone(
-  zone: unknown
-): string {
+function formatZone(zone: unknown): string {
   if (!zone || typeof zone !== "object") return "unknown";
   const value = zone as { slot?: string; zone?: string };
   return `${value.slot ?? "?"} ${value.zone ?? "zone"}`;

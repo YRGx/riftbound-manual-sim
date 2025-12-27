@@ -10,6 +10,12 @@ interface LobbyClientProps {
   userId: string;
 }
 
+type PlayerLayout = {
+  left: string[];
+  center: string[];
+  right: string[];
+};
+
 export default function LobbyClient({ initialMatches, userId }: LobbyClientProps) {
   const router = useRouter();
   const [matches, setMatches] = useState(initialMatches);
@@ -95,6 +101,48 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
     await supabase.auth.signOut();
     router.replace("/auth");
   }
+
+  const zoneBaseClass =
+    "rounded-2xl border border-white/15 bg-gradient-to-br from-[#0e1324] via-[#080c18] to-[#03060d] px-3 py-2 text-center uppercase tracking-[0.35em] text-[0.6rem] text-slate-200 shadow-[inset_0_0_25px_rgba(3,6,13,0.85)]";
+  const zoneVariants: Record<"small" | "long", string> = {
+    small: "min-h-[68px] flex items-center justify-center",
+    long: "min-h-[118px] flex items-center justify-center text-sm tracking-[0.25em]",
+  };
+
+  const topPlayerLayout: PlayerLayout = {
+    left: ["Trash", "Runes Deck"],
+    center: ["Runes", "Base", "Battlefield"],
+    right: ["Main Deck", "Champion", "Legend"],
+  };
+
+  const bottomPlayerLayout: PlayerLayout = {
+    left: ["Champion", "Legend"],
+    center: ["Battlefield", "Base", "Runes"],
+    right: ["Main Deck", "Trash", "Runes Deck"],
+  };
+
+  const renderZone = (label: string, variant: "small" | "long" = "small", key?: string) => (
+    <div key={key ?? label} className={`${zoneBaseClass} ${zoneVariants[variant]}`}>
+      {label}
+    </div>
+  );
+
+  const renderPlayer = (layout: PlayerLayout, label: string) => (
+    <div className="space-y-4" key={label}>
+      <p className="text-[0.55rem] uppercase tracking-[0.4em] text-slate-400">{label}</p>
+      <div className="grid gap-4 md:grid-cols-[150px_minmax(0,1fr)_150px]">
+        <div className="flex flex-col gap-3">
+          {layout.left.map((zone, idx) => renderZone(zone, "small", `${label}-left-${zone}-${idx}`))}
+        </div>
+        <div className="flex flex-col gap-3">
+          {layout.center.map((zone, idx) => renderZone(zone, "long", `${label}-center-${zone}-${idx}`))}
+        </div>
+        <div className="flex flex-col gap-3">
+          {layout.right.map((zone, idx) => renderZone(zone, "small", `${label}-right-${zone}-${idx}`))}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-10 px-4 py-12">
