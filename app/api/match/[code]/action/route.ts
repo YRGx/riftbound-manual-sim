@@ -45,7 +45,7 @@ export async function POST(
   { params }: { params: { code: string } }
 ) {
   const { code } = params;
-  const supabase = await createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient({ allowCookieWrite: true });
   const {
     data: { user },
     error: userError,

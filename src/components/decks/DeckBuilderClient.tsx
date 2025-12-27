@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { SECTION_TARGETS, validateDeckRules } from "@/src/lib/decks";
@@ -39,6 +39,35 @@ const SECTION_HINTS: Record<DeckSection, string> = {
   battlefields: "Pick 3 unique battlefields (1 copy each).",
   side: "Exactly 8 cards you can pivot into during matches.",
 };
+
+const HEADER_LINKS = ["Decks", "Proxies"];
+
+const LIBRARY_TABS = [
+  { id: "legend", label: "Legend", helper: "Select the commander that sets your colors." },
+  { id: "main", label: "Main Deck", helper: "Browse units, spells, and relics." },
+  { id: "battlefields", label: "Battlefields", helper: "Every deck needs three arenas." },
+  { id: "runes", label: "Runes", helper: "Twelve runes must match your legend." },
+] as const;
+
+type LibraryTab = (typeof LIBRARY_TABS)[number]["id"];
+
+const SECTION_ACCENTS: Record<DeckSection, { border: string; badge: string }> = {
+  legend: { border: "border-[#f6d38e]/60", badge: "text-[#f6d38e]" },
+  main: { border: "border-[#7ce7f4]/40", badge: "text-[#7ce7f4]" },
+  runes: { border: "border-[#b487ff]/40", badge: "text-[#c9a2ff]" },
+  battlefields: { border: "border-[#ff9c73]/40", badge: "text-[#ffb590]" },
+  side: { border: "border-[#9ce39a]/40", badge: "text-[#c9ffb8]" },
+};
+
+const SECTION_GRID_COLUMNS: Record<DeckSection, string> = {
+  legend: "grid-cols-1 sm:grid-cols-2",
+  main: "grid-cols-3 sm:grid-cols-4 xl:grid-cols-5",
+  runes: "grid-cols-3 sm:grid-cols-5 xl:grid-cols-7",
+  battlefields: "grid-cols-2 sm:grid-cols-3",
+  side: "grid-cols-3 sm:grid-cols-5 xl:grid-cols-6",
+};
+
+const LIBRARY_PAGE_SIZE = 60;
 
 const emptyDeck = (): WorkingDeck => ({
   name: "Untitled Prototype",
@@ -79,6 +108,16 @@ function createEntry(card: RiftCard, section: DeckSection, quantity = 1): DeckCa
   };
 }
 
+function maxCopiesForSection(section: DeckSection) {
+  if (section === "battlefields") {
+    return 1;
+  }
+  if (section === "runes") {
+    return SECTION_TARGETS.runes;
+  }
+  return MAX_CARD_COPIES;
+}
+
 function isRune(card: RiftCard) {
   return (card.classification?.type ?? "").toLowerCase().includes("rune");
 }
@@ -93,6 +132,47 @@ function isChampion(card: RiftCard) {
   return supertype.toLowerCase() === "champion" || type.toLowerCase().includes("champion");
 }
 
+function isLegendCard(card: RiftCard) {
+  return (card.classification?.type ?? "").toLowerCase().includes("legend");
+}
+
+function matchesLibraryTab(card: RiftCard, tab: LibraryTab) {
+  if (tab === "legend") {
+    return isLegendCard(card);
+  }
+  if (tab === "battlefields") {
+    return isBattlefield(card);
+  }
+  if (tab === "runes") {
+    return isRune(card);
+  }
+  // Main deck pool excludes specialized card types
+  return !isRune(card) && !isBattlefield(card) && !isLegendCard(card);
+}
+
+function matchesSearchQuery(card: RiftCard, query: string) {
+  const haystacks = [
+    card.name,
+    card.public_code,
+    card.classification?.type,
+    card.classification?.rarity,
+    (card.classification?.domain ?? []).join(" "),
+    card.text?.plain,
+    (card.tags ?? []).join(" "),
+  ]
+    .filter(Boolean)
+    .map((value) => (value ?? "").toLowerCase());
+
+  return haystacks.some((value) => value.includes(query));
+}
+
+function domainsMatchLegend(cardDomains: string[], legendDomains: string[]) {
+  if (legendDomains.length === 0 || cardDomains.length === 0) {
+    return true;
+  }
+  return cardDomains.every((domain) => legendDomains.includes(domain));
+}
+
 export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientProps) {
   const router = useRouter();
   const [decks, setDecks] = useState<DeckSummary[]>(initialDecks);
@@ -105,15 +185,23 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<RiftCard[]>([]);
   const [searching, setSearching] = useState(false);
+  const [libraryPage, setLibraryPage] = useState(1);
+  const [libraryHasMore, setLibraryHasMore] = useState(true);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [dragFeedback, setDragFeedback] = useState<string | null>(null);
+  const [expandedCard, setExpandedCard] = useState<RiftCard | null>(null);
+  const [activeLibraryTab, setActiveLibraryTab] = useState<LibraryTab>("legend");
+  const libraryScrollRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const hasLoadedLibraryPages = useRef(false);
 
   const legendCard = useMemo(
     () => workingDeck.cards.find((card) => card.section === "legend"),
     [workingDeck.cards]
   );
+  const legendDomains = legendCard?.cardDomains ?? [];
 
   const sectionTotals = useMemo(() => {
     const totals: Record<DeckSection, number> = {
@@ -128,43 +216,148 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     });
     return totals;
   }, [workingDeck.cards]);
+  const totalCardCount = useMemo(
+    () => workingDeck.cards.reduce((sum, card) => sum + card.quantity, 0),
+    [workingDeck.cards]
+  );
 
   const validation = useMemo(() => validateDeckRules(workingDeck.cards), [workingDeck.cards]);
+  const libraryHelper = useMemo(
+    () => LIBRARY_TABS.find((tab) => tab.id === activeLibraryTab)?.helper ?? "",
+    [activeLibraryTab]
+  );
+  const normalizedQuery = searchTerm.trim().toLowerCase();
+  const filteredLibraryResults = useMemo(() => {
+    if (searchResults.length === 0) {
+      return [];
+    }
+    return searchResults.filter((card) => {
+      if (!matchesLibraryTab(card, activeLibraryTab)) {
+        return false;
+      }
+      if (normalizedQuery && !matchesSearchQuery(card, normalizedQuery)) {
+        return false;
+      }
+      if (
+        legendCard &&
+        legendDomains.length > 0 &&
+        (activeLibraryTab === "main" || activeLibraryTab === "runes")
+      ) {
+        const domains = card.classification?.domain ?? [];
+        if (!domainsMatchLegend(domains, legendDomains)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [searchResults, activeLibraryTab, normalizedQuery, legendCard, legendDomains]);
 
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
-    const timeout = setTimeout(async () => {
+
+    async function loadCards() {
       setSearching(true);
-      const endpoint = searchTerm
-        ? `/api/cards/search?query=${encodeURIComponent(searchTerm)}&size=50`
-        : "/api/cards?size=50";
+      setLibraryError(null);
+      const params = new URLSearchParams({
+        page: libraryPage.toString(),
+        size: LIBRARY_PAGE_SIZE.toString(),
+      });
+      const endpoint = `/api/cards?${params.toString()}`;
+
       try {
         const response = await fetch(endpoint, { signal: controller.signal });
         if (!response.ok) {
           throw new Error("Failed to load cards");
         }
         const payload = (await response.json()) as RiftCardListResponse;
-        if (active) {
-          setSearchResults(payload.items);
+        if (!active) {
+          return;
         }
+
+        setSearchResults((prev) => {
+          const next = libraryPage === 1 ? [] : [...prev];
+          const seen = new Set(next.map((card) => card.id));
+          payload.items.forEach((card) => {
+            if (!seen.has(card.id)) {
+              next.push(card);
+              seen.add(card.id);
+            }
+          });
+          return next;
+        });
+        hasLoadedLibraryPages.current = true;
+        setLibraryHasMore(payload.page < payload.pages);
       } catch (fetchError) {
-        if (active && !(fetchError instanceof DOMException && fetchError.name === "AbortError")) {
-          console.error(fetchError);
+        if (!active || (fetchError instanceof DOMException && fetchError.name === "AbortError")) {
+          return;
         }
+        console.error(fetchError);
+        setLibraryError("Unable to load card library.");
       } finally {
         if (active) {
           setSearching(false);
         }
       }
-    }, searchTerm ? 350 : 0);
+    }
+
+    loadCards();
 
     return () => {
       active = false;
       controller.abort();
-      clearTimeout(timeout);
     };
-  }, [searchTerm]);
+  }, [libraryPage]);
+
+  useEffect(() => {
+    const target = sentinelRef.current;
+    const root = libraryScrollRef.current;
+    if (!target || !root) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first?.isIntersecting && libraryHasMore && !searching) {
+          setLibraryPage((prev) => prev + 1);
+        }
+      },
+      {
+        root,
+        rootMargin: "0px 0px 160px 0px",
+        threshold: 0.1,
+      }
+    );
+
+    observer.observe(target);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [libraryHasMore, searching, filteredLibraryResults.length]);
+
+  useEffect(() => {
+    if (!hasLoadedLibraryPages.current) {
+      return;
+    }
+    if (filteredLibraryResults.length === 0 && libraryHasMore && !searching) {
+      setLibraryPage((prev) => prev + 1);
+    }
+  }, [filteredLibraryResults.length, libraryHasMore, searching, activeLibraryTab, searchTerm]);
+
+  useEffect(() => {
+    if (!expandedCard) {
+      return;
+    }
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setExpandedCard(null);
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [expandedCard]);
 
   useEffect(() => {
     const missingIds = Array.from(
@@ -246,7 +439,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
 
       if (existingIndex >= 0) {
         const existing = prev.cards[existingIndex];
-        const maxQuantity = card.section === "battlefields" ? 1 : MAX_CARD_COPIES;
+        const maxQuantity = maxCopiesForSection(card.section);
         const nextQuantity = Math.min(maxQuantity, existing.quantity + card.quantity);
         if (nextQuantity === existing.quantity) {
           return prev;
@@ -326,6 +519,12 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     }
 
     if (section === "side") {
+      if (legendCard && legendCard.cardDomains && legendCard.cardDomains.length > 0) {
+        const candidateDomains = cardDomains(card);
+        if (!domainsMatchLegend(candidateDomains, legendCard.cardDomains)) {
+          return "Card colors must match your legend.";
+        }
+      }
       if (sectionTotals.side + quantity > SECTION_TARGETS.side) {
         return "Side deck limit reached.";
       }
@@ -333,6 +532,12 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     }
 
     if (section === "main") {
+      if (legendCard && legendCard.cardDomains && legendCard.cardDomains.length > 0) {
+        const candidateDomains = cardDomains(card);
+        if (!domainsMatchLegend(candidateDomains, legendCard.cardDomains)) {
+          return "Card colors must match your legend.";
+        }
+      }
       if (sectionTotals.main + quantity > SECTION_TARGETS.main) {
         return "Main deck is capped at 40 cards.";
       }
@@ -343,8 +548,8 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   }
 
   function setLegend(card: RiftCard) {
-    if (!isChampion(card)) {
-      setError("Legends must be champion units.");
+    if (!isLegendCard(card)) {
+      setError("You can only slot cards with the Legend type here.");
       return;
     }
     setError(null);
@@ -379,7 +584,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       }
 
       const entry = prev.cards[index];
-      const maxQuantity = section === "battlefields" ? 1 : MAX_CARD_COPIES;
+      const maxQuantity = maxCopiesForSection(section);
       const nextQuantity = Math.min(
         maxQuantity,
         Math.max(1, entry.quantity + delta)
@@ -437,9 +642,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         (item) => item.cardId === cardId && item.section === toSection
       );
 
-      if (existingIndex >= 0) {
-        const existing = filtered[existingIndex];
-        const maxQuantity = toSection === "battlefields" ? 1 : MAX_CARD_COPIES;
+        if (existingIndex >= 0) {
+          const existing = filtered[existingIndex];
+          const maxQuantity = maxCopiesForSection(toSection);
         filtered[existingIndex] = {
           ...existing,
           quantity: Math.min(maxQuantity, existing.quantity + entry.quantity),
@@ -504,12 +709,30 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     setTimeout(() => setSaveStatus(null), 2000);
   }
 
-  function renderCardRow(entry: DeckCardEntry) {
+  type ThumbOptions = {
+    keyOverride?: string;
+    hideQuantityBadge?: boolean;
+    singleCopy?: boolean;
+    containerClass?: string;
+    imageSize?: string;
+  };
+
+  function renderCardThumb(entry: DeckCardEntry, options?: ThumbOptions) {
     const canDrag = entry.section === "main" || entry.section === "side";
+    const allowAdjust = entry.section !== "legend" && entry.section !== "battlefields";
+    const cardTypeLabel = entry.card?.classification?.type ?? entry.cardType ?? "Card";
+    const battlefield = cardTypeLabel.toLowerCase().includes("battlefield");
+    const aspect = battlefield ? "aspect-[4/3]" : "aspect-[5/7]";
+    const fit = battlefield ? "object-contain" : "object-cover";
+    const imageUrl = entry.card?.media.image_url;
+    const key = options?.keyOverride ?? `${entry.cardId}-${entry.section}`;
+    const displayQuantity = options?.singleCopy ? 1 : entry.quantity;
+    const showQuantityBadge = !options?.hideQuantityBadge && displayQuantity > 1;
+
     return (
       <div
-        key={`${entry.cardId}-${entry.section}`}
-        className="flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-900/50 p-3"
+        key={key}
+        className={`group relative rounded-2xl border border-white/5 bg-[#060a15]/80 p-1.5 ${options?.containerClass ?? ""}`}
         draggable={canDrag}
         onDragStart={(event) => {
           if (!canDrag) return;
@@ -518,55 +741,81 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             JSON.stringify({ cardId: entry.cardId, section: entry.section })
           );
           event.dataTransfer.effectAllowed = "move";
-          setDragFeedback(
-            entry.section === "main" ? "Drag to side deck" : "Drag to main deck"
-          );
         }}
-        onDragEnd={() => setDragFeedback(null)}
       >
-        <div className="h-16 w-12 overflow-hidden rounded-lg bg-slate-800">
-          {entry.card?.media.image_url && (
-            <Image
-              src={entry.card.media.image_url}
-              alt={entry.card?.name ?? entry.cardName}
-              width={80}
-              height={112}
-              className="h-full w-full object-cover"
-            />
-          )}
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold">{entry.cardName}</p>
-          <p className="text-xs text-slate-400">
-            {entry.card?.classification?.type ?? entry.cardType ?? "Unknown"} · {entry.card?.classification?.rarity ?? ""}
-          </p>
-        </div>
-        {entry.section !== "legend" && entry.section !== "battlefields" && (
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => adjustQuantity(entry.cardId, entry.section, -1)}
-              className="rounded-full border border-white/20 px-2 py-1 text-sm"
-            >
-              -
-            </button>
-            <span className="min-w-[2ch] text-center text-lg font-semibold">{entry.quantity}</span>
-            <button
-              onClick={() => adjustQuantity(entry.cardId, entry.section, 1)}
-              className="rounded-full border border-white/20 px-2 py-1 text-sm"
-            >
-              +
-            </button>
-          </div>
-        )}
-        {entry.section === "battlefields" && (
-          <span className="rounded-full border border-white/20 px-3 py-1 text-xs">1x</span>
-        )}
-        <button
-          onClick={() => removeCard(entry.cardId, entry.section)}
-          className="rounded-full border border-white/20 px-2 py-1 text-xs text-slate-300"
+        <div
+          className={`relative ${aspect} overflow-hidden rounded-xl bg-black/60`}
+          onClick={() => entry.card && setExpandedCard(entry.card)}
+          role={entry.card ? "button" : undefined}
+          tabIndex={entry.card ? 0 : -1}
+          onKeyDown={(event) => {
+            if (!entry.card) return;
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setExpandedCard(entry.card);
+            }
+          }}
         >
-          Remove
-        </button>
+          {imageUrl ? (
+            <Image
+              src={imageUrl}
+              alt={entry.cardName}
+              fill
+              className={`${fit} cursor-zoom-in`}
+              sizes={options?.imageSize ?? "120px"}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-xs text-slate-500">
+              No art
+            </div>
+          )}
+          {showQuantityBadge && (
+            <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white">
+              x{entry.quantity}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (options?.singleCopy && entry.quantity > 1) {
+                adjustQuantity(entry.cardId, entry.section, -1);
+                return;
+              }
+              removeCard(entry.cardId, entry.section);
+            }}
+            className="absolute right-2 top-2 rounded-full border border-white/30 bg-black/70 px-2 py-0.5 text-xs text-slate-100 opacity-0 transition group-hover:opacity-100"
+          >
+            X
+          </button>
+          {allowAdjust && (
+            <div className="absolute bottom-2 right-2 flex flex-col gap-1 opacity-0 transition group-hover:opacity-100">
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  adjustQuantity(entry.cardId, entry.section, 1);
+                }}
+                className="rounded-full border border-white/40 bg-black/70 px-2 text-xs text-white"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  adjustQuantity(entry.cardId, entry.section, -1);
+                }}
+                className="rounded-full border border-white/40 bg-black/70 px-2 text-xs text-white"
+              >
+                -
+              </button>
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent px-2 py-1 text-center text-[0.65rem] font-semibold">
+            {entry.cardName}
+          </div>
+        </div>
       </div>
     );
   }
@@ -577,12 +826,14 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const count = sectionTotals[section];
     const isComplete = count === needed;
     const droppable = extra?.droppable;
+    const accent = SECTION_ACCENTS[section];
+    const gridClass = SECTION_GRID_COLUMNS[section] ?? "grid-cols-2";
 
     return (
       <div
         key={section}
-        className={`rounded-2xl border p-4 ${
-          isComplete ? "border-white/10 bg-slate-900/60" : "border-amber-400/40 bg-amber-500/5"
+        className={`rounded-2xl border ${accent.border} bg-[#0b101b]/80 p-4 transition ${
+          isComplete ? "shadow-[0_0_25px_rgba(246,211,142,0.08)]" : "shadow-[0_0_20px_rgba(0,0,0,0.4)]"
         }`}
         onDragOver={(event) => {
           if (!droppable) return;
@@ -602,259 +853,485 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           }
         }}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">{SECTION_LABELS[section]}</p>
-            <p className="text-sm text-slate-400">{SECTION_HINTS[section]}</p>
+            <p className={`text-[0.65rem] uppercase tracking-[0.4em] ${accent.badge}`}>
+              {SECTION_LABELS[section]}
+            </p>
+            <p className="text-xs text-slate-400">{SECTION_HINTS[section]}</p>
           </div>
-          <span className="text-sm font-semibold">
+          <span className="text-sm font-semibold text-white">
             {count}/{needed}
           </span>
         </div>
-        <div className="mt-3 space-y-3">
-          {cards.length === 0 && (
-            <p className="rounded-xl border border-dashed border-white/10 px-3 py-4 text-center text-xs text-slate-400">
-              Empty slot
-            </p>
-          )}
-          {cards.map((card) => renderCardRow(card))}
-        </div>
+        {cards.length === 0 ? (
+          <p className="mt-3 rounded-2xl border border-dashed border-white/10 px-3 py-4 text-center text-xs text-slate-500">
+            Empty — add cards from the library.
+          </p>
+        ) : section === "legend" ? (
+          <div className="mt-3 flex justify-center">
+            {cards.map((card) =>
+              renderCardThumb(card, {
+                hideQuantityBadge: true,
+                singleCopy: true,
+                containerClass: "max-w-[220px] w-full",
+                imageSize: "220px",
+              })
+            )}
+          </div>
+        ) : (
+          <div className={`mt-3 grid gap-3 ${gridClass}`}>
+            {cards.map((card) => renderCardThumb(card))}
+          </div>
+        )}
       </div>
     );
   }
 
-  return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 px-4 py-10 text-white">
-      <div className="mx-auto flex max-w-7xl flex-col gap-6 lg:grid lg:grid-cols-[260px_minmax(0,1fr)_360px]">
-        <aside className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 shadow-2xl backdrop-blur">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">Vault</p>
-              <h2 className="text-xl font-semibold">My Decks</h2>
-            </div>
-            <button
-              className="rounded-full bg-cyan-500/80 px-3 py-1 text-xs font-semibold text-slate-950 hover:bg-cyan-400"
-              onClick={() => handleSelectDeck(undefined)}
-            >
-              New
-            </button>
-          </div>
-          <ul className="mt-4 space-y-2 text-sm">
-            {decks.length === 0 && (
-              <li className="rounded-2xl border border-dashed border-white/10 px-3 py-4 text-center text-slate-400">
-                No saved decks yet.
-              </li>
-            )}
-            {decks.map((deck) => (
-              <li key={deck.id}>
-                <button
-                  onClick={() => handleSelectDeck(deck)}
-                  className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
-                    selectedDeckId === deck.id
-                      ? "border-cyan-400/80 bg-cyan-500/10"
-                      : "border-white/10 bg-white/5 hover:border-cyan-400/40"
-                  }`}
-                >
-                  <p className="text-sm font-semibold">{deck.name}</p>
-                  <p className="text-xs text-slate-400">
-                    {deck.cards.reduce((sum, entry) => sum + entry.quantity, 0)} cards
-                  </p>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </aside>
+  function renderLibraryActions(card: RiftCard) {
+    if (activeLibraryTab === "legend") {
+      return (
+        <button
+          onClick={() => setLegend(card)}
+          className="w-full rounded-xl border border-[#f6d38e]/40 bg-[#f6d38e]/10 px-3 py-2 text-xs font-semibold text-[#f6d38e] transition hover:bg-[#f6d38e]/20"
+        >
+          Set as Legend
+        </button>
+      );
+    }
 
-        <section className="rounded-3xl border border-white/10 bg-slate-950/70 p-6 shadow-2xl backdrop-blur">
-          <header className="flex flex-col gap-4 border-b border-white/5 pb-5 lg:flex-row lg:items-center lg:justify-between">
+    if (activeLibraryTab === "battlefields") {
+      return (
+        <button
+          onClick={() => addCardToSection(card, "battlefields")}
+          className="w-full rounded-xl border border-[#ff9c73]/40 bg-[#ff9c73]/10 px-3 py-2 text-xs font-semibold text-[#ffb590] transition hover:bg-[#ff9c73]/20"
+        >
+          Add Battlefield
+        </button>
+      );
+    }
+
+    if (activeLibraryTab === "runes") {
+      return (
+        <button
+          onClick={() => addCardToSection(card, "runes")}
+          className="w-full rounded-xl border border-[#b487ff]/40 bg-[#b487ff]/10 px-3 py-2 text-xs font-semibold text-[#c9a2ff] transition hover:bg-[#b487ff]/20"
+        >
+          Add Rune
+        </button>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          onClick={() => addCardToSection(card, "main")}
+          className="rounded-xl border border-white/10 bg-white/5 px-2 py-2 text-xs font-semibold text-white transition hover:border-[#7ce7f4]/50"
+        >
+          Main Deck
+        </button>
+        <button
+          onClick={() => addCardToSection(card, "side")}
+          className="rounded-xl border border-white/10 bg-white/5 px-2 py-2 text-xs font-semibold text-white transition hover:border-[#9ce39a]/70"
+        >
+          Sideboard
+        </button>
+      </div>
+    );
+  }
+
+  
+
+  return (
+    <div className="min-h-screen bg-[#05070d] text-white">
+      <div className="border-b border-white/5 bg-[#080c15]/90 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-4 px-4 py-4">
+          <div className="flex flex-wrap items-center gap-6">
+            <p className="font-display text-2xl text-[#f6d38e]">Rift Archive</p>
+            <nav className="hidden gap-6 text-sm text-slate-300 md:flex">
+              {HEADER_LINKS.map((entry) => (
+                <span key={entry} className="tracking-wide text-slate-500">
+                  {entry}
+                </span>
+              ))}
+            </nav>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+            <span
+              className={`rounded-full border border-white/10 px-3 py-1 ${dirty ? "text-amber-200" : "text-emerald-200"}`}
+            >
+              {dirty ? "Unsaved" : "Synced"}
+            </span>
+            <span className="rounded-full border border-[#f6d38e]/70 px-3 py-1 text-[#f6d38e]">
+              {totalCardCount} cards
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <main className="grid min-h-[calc(100vh-120px)] w-full gap-6 px-4 py-8 lg:grid-cols-[minmax(520px,1.35fr)_minmax(0,0.75fr)] 2xl:grid-cols-[minmax(640px,1.5fr)_minmax(0,0.7fr)]">
+        <section className="rounded-[32px] border border-white/5 bg-gradient-to-b from-[#161c2f] via-[#101629] to-[#090f1c] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)]">
+          <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">Deck Studio</p>
+              <p className="text-[0.65rem] uppercase tracking-[0.6em] text-[#7ce7f4]">Card Library</p>
+              <h2 className="font-display text-3xl text-[#f6d38e]">Legendarium</h2>
+              <p className="text-xs text-slate-400">{libraryHelper}</p>
+            </div>
+            <div className="rounded-full border border-white/10 px-4 py-2 text-xs text-slate-300">
+              {filteredLibraryResults.length} cards
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            {LIBRARY_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveLibraryTab(tab.id)}
+                className={`rounded-full border px-4 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.35em] transition ${
+                  activeLibraryTab === tab.id
+                    ? "border-[#f6d38e] bg-[#f6d38e]/15 text-[#f6d38e]"
+                    : "border-white/10 text-slate-300 hover:border-[#f6d38e]/60"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-3">
+            <div className="flex-1 rounded-full border border-white/10 bg-black/40 px-4 py-2 text-sm shadow-inner">
               <input
-                value={workingDeck.name}
-                onChange={(event) => {
-                  setWorkingDeck({ ...workingDeck, name: event.target.value });
-                  setDirty(true);
-                }}
-                className="mt-1 w-full bg-transparent text-3xl font-semibold focus:outline-none"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search cards, domains, keywords..."
+                className="w-full bg-transparent placeholder:text-slate-500 focus:outline-none"
               />
             </div>
-            <div className="flex flex-wrap gap-3">
-              <label className="flex items-center gap-2 text-sm text-slate-300">
-                <span>Format</span>
-                <input
-                  value={workingDeck.format}
-                  onChange={(event) => {
-                    setWorkingDeck({ ...workingDeck, format: event.target.value });
-                    setDirty(true);
+            <button className="rounded-full border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.4em] text-slate-300">
+              Sort
+            </button>
+            <button className="rounded-full border border-white/10 px-4 py-2 text-xs uppercase tracking-[0.4em] text-slate-300">
+              Filters
+            </button>
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            Active legend: {legendCard ? legendCard.cardName : "None"}
+          </p>
+
+          <div className="mt-5 flex h-[calc(100vh-260px)] flex-col overflow-hidden">
+            <div ref={libraryScrollRef} className="flex-1 space-y-4 overflow-y-auto pr-2">
+              {searching && <p className="text-xs text-slate-400">Loading cards...</p>}
+              {filteredLibraryResults.length === 0 && !searching && (
+                <p className="text-xs text-slate-500">No cards match the filters.</p>
+              )}
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                {filteredLibraryResults.map((card) => {
+                  const battlefield = isBattlefield(card);
+                  const aspect = battlefield ? "aspect-[4/3]" : "aspect-[5/7]";
+                  const fit = battlefield ? "object-contain" : "object-cover";
+                  return (
+                    <div
+                      key={card.id}
+                      className="flex h-full flex-col rounded-[24px] border border-white/10 bg-[#0b111d] shadow-[0_10px_30px_rgba(0,0,0,0.45)]"
+                    >
+                      <div
+                        className={`relative ${aspect} cursor-zoom-in overflow-hidden rounded-t-[24px] bg-black/60`}
+                        onClick={() => setExpandedCard(card)}
+                      >
+                        {card.media.image_url && (
+                          <Image
+                            src={card.media.image_url}
+                            alt={card.name}
+                            fill
+                            sizes="220px"
+                            className={fit}
+                          />
+                        )}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                        <div className="absolute bottom-3 left-4 right-4 text-sm font-semibold tracking-wide drop-shadow-lg">
+                          {card.name}
+                        </div>
+                      </div>
+                      <div className="flex flex-1 flex-col gap-3 border-t border-white/5 p-4 text-sm">
+                        <p className="text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+                          {card.classification?.type ?? "Unknown"}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {(card.classification?.domain ?? []).join(", ")}
+                        </p>
+                        {renderLibraryActions(card)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {libraryHasMore && (
+                <div ref={sentinelRef} className="h-12 w-full" />
+              )}
+            </div>
+            {libraryError && (
+              <p className="pt-3 text-xs text-rose-300">{libraryError}</p>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-[32px] border border-white/5 bg-[#080d16]/90 p-6 shadow-[0_10px_60px_rgba(0,0,0,0.45)] backdrop-blur">
+          <div className="space-y-5">
+            <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4 shadow-inner">
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+                <div>
+                  <p className="text-[0.65rem] uppercase tracking-[0.4em] text-[#7ce7f4]">Deck Studio</p>
+                  <input
+                    value={workingDeck.name}
+                    onChange={(event) => {
+                      setWorkingDeck({ ...workingDeck, name: event.target.value });
+                      setDirty(true);
+                    }}
+                    className="mt-1 w-full bg-transparent text-3xl font-semibold focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">
+                    Deck Vault
+                    <select
+                      value={selectedDeckId}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === "new") {
+                          handleSelectDeck(undefined);
+                          return;
+                        }
+                        const nextDeck = decks.find((deck) => deck.id === value);
+                        handleSelectDeck(nextDeck);
+                      }}
+                      className="mt-1 w-full rounded-xl border border-white/10 bg-[#05070d] px-3 py-2 text-xs uppercase tracking-[0.3em] focus:border-[#f6d38e] focus:outline-none"
+                    >
+                      <option value="new">New prototype</option>
+                      {decks.map((deck) => (
+                        <option key={deck.id} value={deck.id}>
+                          {deck.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3 text-xs text-slate-300">
+                <label className="flex flex-1 flex-col">
+                  <span className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">Format</span>
+                  <input
+                    value={workingDeck.format}
+                    onChange={(event) => {
+                      setWorkingDeck({ ...workingDeck, format: event.target.value });
+                      setDirty(true);
+                    }}
+                    className="mt-1 rounded-xl border border-white/10 bg-[#05070d] px-3 py-2 text-sm focus:border-[#f6d38e] focus:outline-none"
+                    placeholder="Origins"
+                  />
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={workingDeck.isPublic}
+                    onChange={(event) => {
+                      setWorkingDeck({ ...workingDeck, isPublic: event.target.checked });
+                      setDirty(true);
+                    }}
+                    className="h-4 w-4 rounded border-white/20 bg-slate-900"
+                  />
+                  <span className="text-[0.65rem] uppercase tracking-[0.3em] text-slate-400">Public</span>
+                </label>
+                <button
+                  onClick={saveDeck}
+                  disabled={workingDeck.name.trim().length === 0 || validation.errors.length > 0 || !dirty}
+                  className="rounded-xl border border-[#9ce39a]/50 bg-[#9ce39a]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#c9ffb8] transition hover:bg-[#9ce39a]/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-slate-500"
+                >
+                  {saveStatus ?? (workingDeck.id ? "Save changes" : "Save deck")}
+                </button>
+              </div>
+
+              <textarea
+                value={workingDeck.description}
+                onChange={(event) => {
+                  setWorkingDeck({ ...workingDeck, description: event.target.value });
+                  setDirty(true);
+                }}
+                placeholder="Describe your plan, synergies, matchup notes..."
+                className="w-full rounded-2xl border border-white/10 bg-[#05070d] px-4 py-3 text-sm text-slate-200 focus:border-[#f6d38e] focus:outline-none"
+                rows={3}
+              />
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="flex flex-wrap gap-4 text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+                {Object.entries(SECTION_LABELS).map(([key, label]) => (
+                  <span key={key} className={`${SECTION_ACCENTS[key as DeckSection].badge}`}>
+                    {label} {sectionTotals[key as DeckSection]}/{SECTION_TARGETS[key as DeckSection]}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-4">
+              {renderSection("legend")}
+              <div className="grid gap-4 md:grid-cols-2">
+                {renderSection("battlefields")}
+                {renderSection("runes")}
+              </div>
+              {renderSection("side", { droppable: true })}
+            </div>
+
+            <div
+              className="rounded-2xl border border-[#7ce7f4]/40 bg-[#0b111d]/90 p-4"
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+                event.preventDefault();
+              }}
+              onDrop={(event) => {
+                if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+                event.preventDefault();
+                const raw = event.dataTransfer.getData(DRAG_MIME);
+                try {
+                  const payload = JSON.parse(raw) as { cardId: string; section: DeckSection };
+                  moveCard(payload.cardId, payload.section, "main");
+                } catch (dropError) {
+                  console.error(dropError);
+                }
+              }}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[0.65rem] uppercase tracking-[0.35em] text-[#7ce7f4]">Main Deck</p>
+                  <p className="text-xs text-slate-400">{SECTION_HINTS.main}</p>
+                  <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-500">Sort: Energy › Power › Name</p>
+                </div>
+                <span className="text-sm font-semibold">
+                  {sectionTotals.main}/{SECTION_TARGETS.main}
+                </span>
+              </div>
+              {(() => {
+                const mainCards = workingDeck.cards.filter((card) => card.section === "main");
+                if (mainCards.length === 0) {
+                  return (
+                    <p className="mt-3 rounded-2xl border border-dashed border-white/15 px-4 py-6 text-center text-xs text-slate-500">
+                      Add cards to your main deck.
+                    </p>
+                  );
+                }
+                const expanded = mainCards.flatMap((card) =>
+                  Array.from({ length: card.quantity }).map((_, index) => ({
+                    entry: card,
+                    key: `${card.cardId}-${index}`,
+                  }))
+                );
+                return (
+                  <div className={`mt-3 grid gap-3 ${SECTION_GRID_COLUMNS.main}`}>
+                    {expanded.map(({ entry, key }) =>
+                      renderCardThumb(entry, {
+                        keyOverride: key,
+                        hideQuantityBadge: true,
+                        singleCopy: true,
+                      })
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {error && (
+              <p className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                {error}
+              </p>
+            )}
+            {validation.errors.length > 0 && (
+              <ul className="space-y-2 text-sm text-amber-200">
+                {validation.errors.map((message) => (
+                  <li key={message} className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2">
+                    {message}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-xs">
+              <div className="flex flex-wrap gap-2 text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+                <button className="rounded-full border border-white/10 px-3 py-1" disabled>
+                  Import
+                </button>
+                <button className="rounded-full border border-white/10 px-3 py-1" disabled>
+                  Export
+                </button>
+                <button
+                  className="rounded-full border border-white/10 px-3 py-1"
+                  onClick={() => {
+                    handleSelectDeck(undefined);
                   }}
-                  className="rounded-xl border border-white/10 bg-slate-900/80 px-3 py-1 text-sm focus:border-cyan-400 focus:outline-none"
-                  placeholder="Origins"
-                />
-              </label>
-              <label className="flex items-center gap-2 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={workingDeck.isPublic}
-                  onChange={(event) => {
-                    setWorkingDeck({ ...workingDeck, isPublic: event.target.checked });
-                    setDirty(true);
-                  }}
-                  className="h-4 w-4 rounded border-white/20 bg-slate-900"
-                />
-                <span>Make deck public</span>
-              </label>
+                >
+                  Clear
+                </button>
+              </div>
               <button
                 onClick={saveDeck}
                 disabled={workingDeck.name.trim().length === 0 || validation.errors.length > 0 || !dirty}
-                className="rounded-xl bg-emerald-500/80 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-emerald-400 disabled:opacity-40"
+                className="rounded-full border border-[#f6d38e]/70 bg-[#f6d38e]/20 px-5 py-2 text-[0.7rem] font-semibold uppercase tracking-[0.35em] text-[#f6d38e] transition hover:bg-[#f6d38e]/30 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-slate-500"
               >
                 {saveStatus ?? (workingDeck.id ? "Save changes" : "Save deck")}
               </button>
             </div>
-          </header>
-
-          <textarea
-            value={workingDeck.description}
-            onChange={(event) => {
-              setWorkingDeck({ ...workingDeck, description: event.target.value });
-              setDirty(true);
-            }}
-            placeholder="Describe your plan, synergies, matchup notes..."
-            className="mt-4 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-slate-200 focus:border-cyan-400 focus:outline-none"
-            rows={3}
-          />
-
-          <div className="mt-6 grid gap-4 lg:grid-cols-2">
-            {renderSection("legend")}
-            {renderSection("battlefields")}
-            {renderSection("runes")}
-            {renderSection("side", { droppable: true })}
           </div>
-
-          <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900/60 p-4" onDragOver={(event) => {
-            if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
-            event.preventDefault();
-          }} onDrop={(event) => {
-            if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
-            event.preventDefault();
-            const raw = event.dataTransfer.getData(DRAG_MIME);
-            try {
-              const payload = JSON.parse(raw) as { cardId: string; section: DeckSection };
-              moveCard(payload.cardId, payload.section, "main");
-            } catch (dropError) {
-              console.error(dropError);
-            }
-          }}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">Main Deck</p>
-                <p className="text-sm text-slate-400">{SECTION_HINTS.main}</p>
-              </div>
-              <span className="text-sm font-semibold">
-                {sectionTotals.main}/{SECTION_TARGETS.main}
-              </span>
-            </div>
-            <div className="mt-3 space-y-3">
-              {workingDeck.cards
-                .filter((card) => card.section === "main")
-                .map((card) => renderCardRow(card))}
-            </div>
-          </div>
-
-          {error && (
-            <p className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-              {error}
-            </p>
-          )}
-          {validation.errors.length > 0 && (
-            <ul className="mt-4 space-y-2 text-sm text-amber-200">
-              {validation.errors.map((message) => (
-                <li key={message} className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2">
-                  {message}
-                </li>
-              ))}
-            </ul>
-          )}
-          {dragFeedback && (
-            <p className="mt-4 text-center text-xs text-slate-400">{dragFeedback}</p>
-          )}
         </section>
-
-        <aside className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 shadow-2xl backdrop-blur">
-          <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-cyan-400">Riftcodex</p>
-            <h2 className="text-xl font-semibold">Card Library</h2>
-          </div>
-          <input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Search name, domain, etc."
-            className="mt-4 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-2 text-sm focus:border-cyan-400 focus:outline-none"
-          />
-          <div className="mt-4 h-[70vh] space-y-3 overflow-y-auto pr-2">
-            {searching && <p className="text-xs text-slate-400">Loading cards...</p>}
-            {searchResults.map((card) => (
+      </main>
+      {expandedCard && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+          onClick={() => setExpandedCard(null)}
+        >
+          {(() => {
+            const battlefield = isBattlefield(expandedCard);
+            const aspect = battlefield ? "aspect-[4/3]" : "aspect-[5/7]";
+            const fit = battlefield ? "object-contain" : "object-cover";
+            return (
               <div
-                key={card.id}
-                className="rounded-2xl border border-white/10 bg-white/5 p-3"
+                className="relative w-full max-w-2xl rounded-[32px] border border-white/10 bg-[#05070d] p-4"
+                onClick={(event) => event.stopPropagation()}
               >
-                <div className="flex items-center gap-3">
-                  <div className="h-20 w-14 overflow-hidden rounded-lg bg-slate-800">
-                    {card.media.image_url && (
-                      <Image
-                        src={card.media.image_url}
-                        alt={card.name}
-                        width={90}
-                        height={128}
-                        className="h-full w-full object-cover"
-                      />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-semibold">{card.name}</p>
-                    <p className="text-xs text-slate-400">
-                      {card.classification?.type ?? ""} · {(card.classification?.domain ?? []).join(", ")}
-                    </p>
-                    <p className="text-xs text-slate-500 line-clamp-2">{card.text.plain}</p>
-                  </div>
+                <button
+                  type="button"
+                  onClick={() => setExpandedCard(null)}
+                  className="absolute right-6 top-6 rounded-full border border-white/30 px-3 py-1 text-sm text-white"
+                >
+                  Close
+                </button>
+                <div className={`relative ${aspect} overflow-hidden rounded-3xl bg-black/70`}>
+                  {expandedCard.media.image_url ? (
+                    <Image
+                      src={expandedCard.media.image_url}
+                      alt={expandedCard.name}
+                      fill
+                      className={`${fit}`}
+                      sizes="480px"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                      No art available
+                    </div>
+                  )}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                  <button
-                    onClick={() => addCardToSection(card, "main")}
-                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
-                  >
-                    Add to Main
-                  </button>
-                  <button
-                    onClick={() => addCardToSection(card, "side")}
-                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
-                  >
-                    Add to Side
-                  </button>
-                  <button
-                    onClick={() => addCardToSection(card, "runes")}
-                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
-                  >
-                    Add Rune
-                  </button>
-                  <button
-                    onClick={() => addCardToSection(card, "battlefields")}
-                    className="rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
-                  >
-                    Add Battlefield
-                  </button>
-                  <button
-                    onClick={() => setLegend(card)}
-                    className="col-span-2 rounded-xl border border-white/10 px-2 py-2 text-center hover:border-cyan-400"
-                  >
-                    Set as Legend
-                  </button>
+                <div className="mt-4 text-center">
+                  <p className="text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+                    {expandedCard.classification?.type ?? "Card"}
+                  </p>
+                  <h3 className="font-display text-2xl text-white">{expandedCard.name}</h3>
+                  <p className="text-sm text-slate-300">
+                    {(expandedCard.classification?.domain ?? []).join(", ") || "Neutral"}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
-        </aside>
-      </div>
-    </main>
+            );
+          })()}
+        </div>
+      )}
+    </div>
   );
 }

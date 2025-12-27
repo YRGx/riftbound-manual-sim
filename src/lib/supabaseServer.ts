@@ -25,7 +25,12 @@ function setCookie(
   });
 }
 
-export async function createSupabaseServerClient() {
+interface CreateClientOptions {
+  allowCookieWrite?: boolean;
+}
+
+export async function createSupabaseServerClient(options?: CreateClientOptions) {
+  const { allowCookieWrite = false } = options ?? {};
   const cookieStore = await cookies();
 
   return createServerClient(supabaseUrl, supabaseAnonKey, {
@@ -37,6 +42,9 @@ export async function createSupabaseServerClient() {
         }));
       },
       setAll(cookiesToSet) {
+        if (!allowCookieWrite) {
+          return;
+        }
         cookiesToSet.forEach(({ name, value, options }) => {
           setCookie(cookieStore, name, value, options);
         });

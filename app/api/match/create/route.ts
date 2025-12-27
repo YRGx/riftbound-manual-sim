@@ -13,7 +13,7 @@ function generateCode(length = 6) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient({ allowCookieWrite: true });
   const {
     data: { user },
     error: userError,

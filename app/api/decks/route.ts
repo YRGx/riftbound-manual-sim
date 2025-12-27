@@ -5,7 +5,7 @@ import { mapDeckRow, normalizeDeckPayload, validateDeckRules } from "@/src/lib/d
 import type { DeckSummary } from "@/src/types/deck";
 
 export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient({ allowCookieWrite: true });
   const {
     data: { user },
   } = await supabase.auth.getUser();

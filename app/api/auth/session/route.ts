@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/src/lib/supabaseServer";
 
 export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient({ allowCookieWrite: true });
 
   let payload: unknown;
   try {

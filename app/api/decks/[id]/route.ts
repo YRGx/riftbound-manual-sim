@@ -14,7 +14,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Deck id missing" }, { status: 400 });
   }
 
-  const supabase = await createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient({ allowCookieWrite: true });
   const {
     data: { user },
   } = await supabase.auth.getUser();

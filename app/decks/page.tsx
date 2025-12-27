@@ -14,19 +14,33 @@ export default async function DecksPage() {
     redirect("/auth");
   }
 
-  const { data, error } = await supabase
-    .from("decks")
-    .select(
-      "id, owner_id, name, description, format, cover_card_id, is_public, created_at, updated_at, deck_cards(card_id, card_name, card_public_code, quantity)"
-    )
-    .eq("owner_id", user.id)
-    .order("updated_at", { ascending: false });
+  let decks: DeckSummary[] = [];
 
-  if (error) {
-    console.error(error);
+  try {
+    const { data, error } = await supabase
+      .from("decks")
+      .select(
+        "id, owner_id, name, description, format, cover_card_id, is_public, created_at, updated_at, deck_cards(card_id, card_name, card_public_code, quantity, section, card_domains, card_supertype, card_type)"
+      )
+      .eq("owner_id", user.id)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+
+    decks = Array.isArray(data) ? data.map(mapDeckRow) : [];
+  } catch (queryError) {
+    const formattedError =
+      queryError && typeof queryError === "object"
+        ? {
+            message: (queryError as { message?: string }).message,
+            ...(queryError as Record<string, unknown>),
+          }
+        : queryError;
+
+    console.warn("[DecksPage] Unable to load decks", formattedError);
   }
-
-  const decks: DeckSummary[] = Array.isArray(data) ? data.map(mapDeckRow) : [];
 
   return <DeckBuilderClient initialDecks={decks} />;
 }
