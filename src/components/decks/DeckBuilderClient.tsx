@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { SECTION_TARGETS, validateDeckRules } from "@/src/lib/decks";
@@ -50,6 +50,16 @@ const LIBRARY_TABS = [
 ] as const;
 
 type LibraryTab = (typeof LIBRARY_TABS)[number]["id"];
+
+const STUDIO_TABS = [
+  { id: "legend", label: "Preview" },
+  { id: "main", label: "Main Deck" },
+  { id: "battlefields", label: "Battlefields" },
+  { id: "side", label: "Side Deck" },
+  { id: "runes", label: "Runes" },
+] as const;
+
+type StudioTab = (typeof STUDIO_TABS)[number]["id"];
 
 const SECTION_ACCENTS: Record<DeckSection, { border: string; badge: string }> = {
   legend: { border: "border-[#f6d38e]/60", badge: "text-[#f6d38e]" },
@@ -185,14 +195,15 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<RiftCard[]>([]);
   const [searching, setSearching] = useState(false);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [libraryPage, setLibraryPage] = useState(1);
   const [libraryHasMore, setLibraryHasMore] = useState(true);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [expandedCard, setExpandedCard] = useState<RiftCard | null>(null);
   const [activeLibraryTab, setActiveLibraryTab] = useState<LibraryTab>("legend");
+  const [activeStudioTab, setActiveStudioTab] = useState<StudioTab>("legend");
   const libraryScrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const hasLoadedLibraryPages = useRef(false);
@@ -227,6 +238,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     [activeLibraryTab]
   );
   const normalizedQuery = searchTerm.trim().toLowerCase();
+  const deckDisplayName = workingDeck.name.trim() || "Untitled Prototype";
   const filteredLibraryResults = useMemo(() => {
     if (searchResults.length === 0) {
       return [];
@@ -255,12 +267,13 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    const page = libraryPage;
 
     async function loadCards() {
       setSearching(true);
       setLibraryError(null);
       const params = new URLSearchParams({
-        page: libraryPage.toString(),
+        page: page.toString(),
         size: LIBRARY_PAGE_SIZE.toString(),
       });
       const endpoint = `/api/cards?${params.toString()}`;
@@ -276,7 +289,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         }
 
         setSearchResults((prev) => {
-          const next = libraryPage === 1 ? [] : [...prev];
+          const next = page === 1 ? [] : [...prev];
           const seen = new Set(next.map((card) => card.id));
           payload.items.forEach((card) => {
             if (!seen.has(card.id)) {
@@ -715,6 +728,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     singleCopy?: boolean;
     containerClass?: string;
     imageSize?: string;
+    stackedPreview?: boolean;
   };
 
   function renderCardThumb(entry: DeckCardEntry, options?: ThumbOptions) {
@@ -726,8 +740,37 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const fit = battlefield ? "object-contain" : "object-cover";
     const imageUrl = entry.card?.media.image_url;
     const key = options?.keyOverride ?? `${entry.cardId}-${entry.section}`;
+    const isStackedPreview = Boolean(options?.stackedPreview);
+    const stackPreviewCopies = isStackedPreview ? Math.min(entry.quantity, 4) : 1;
+    const stackPadding = battlefield ? "75%" : "140%";
     const displayQuantity = options?.singleCopy ? 1 : entry.quantity;
     const showQuantityBadge = !options?.hideQuantityBadge && displayQuantity > 1;
+
+    const handleCardClick = () => {
+      if (!entry.card) return;
+      setExpandedCard(entry.card);
+    };
+
+    const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (!entry.card) return;
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setExpandedCard(entry.card);
+      }
+    };
+
+    const renderImage = () =>
+      imageUrl ? (
+        <Image
+          src={imageUrl}
+          alt={entry.cardName}
+          fill
+          className={`${fit} cursor-zoom-in`}
+          sizes={options?.imageSize ?? "120px"}
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center text-xs text-slate-500">No art</div>
+      );
 
     return (
       <div
@@ -744,33 +787,41 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         }}
       >
         <div
-          className={`relative ${aspect} overflow-hidden rounded-xl bg-black/60`}
-          onClick={() => entry.card && setExpandedCard(entry.card)}
+          className={`${
+            isStackedPreview ? "relative overflow-visible" : `relative ${aspect} overflow-hidden`
+          } rounded-xl bg-black/60`}
+          style={isStackedPreview ? { paddingBottom: stackPadding } : undefined}
+          onClick={handleCardClick}
           role={entry.card ? "button" : undefined}
           tabIndex={entry.card ? 0 : -1}
-          onKeyDown={(event) => {
-            if (!entry.card) return;
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              setExpandedCard(entry.card);
-            }
-          }}
+          onKeyDown={handleKeyDown}
         >
-          {imageUrl ? (
-            <Image
-              src={imageUrl}
-              alt={entry.cardName}
-              fill
-              className={`${fit} cursor-zoom-in`}
-              sizes={options?.imageSize ?? "120px"}
-            />
+          {isStackedPreview ? (
+            Array.from({ length: stackPreviewCopies }).map((_, idx) => (
+              <div
+                key={`${key}-stack-${idx}`}
+                className={`absolute inset-0 rounded-[18px] border border-white/10 bg-black/80 shadow-lg ${
+                  battlefield ? "p-2" : ""
+                }`}
+                style={{
+                  transform: `translate(${idx * 6}px, ${-idx * 6}px)`,
+                  zIndex: 20 - idx,
+                }}
+              >
+                <div className="relative h-full w-full overflow-hidden rounded-[16px]">
+                  {renderImage()}
+                </div>
+              </div>
+            ))
           ) : (
-            <div className="flex h-full items-center justify-center text-xs text-slate-500">
-              No art
-            </div>
+            renderImage()
           )}
           {showQuantityBadge && (
-            <span className="pointer-events-none absolute left-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white">
+            <span
+              className={`pointer-events-none absolute rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white ${
+                isStackedPreview ? "right-2 top-2" : "left-2 top-2"
+              }`}
+            >
               x{entry.quantity}
             </span>
           )}
@@ -784,7 +835,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
               }
               removeCard(entry.cardId, entry.section);
             }}
-            className="absolute right-2 top-2 rounded-full border border-white/30 bg-black/70 px-2 py-0.5 text-xs text-slate-100 opacity-0 transition group-hover:opacity-100"
+            className={`absolute rounded-full border border-white/30 bg-black/70 px-2 py-0.5 text-xs text-slate-100 opacity-0 transition group-hover:opacity-100 ${
+              isStackedPreview ? "left-2 top-2" : "right-2 top-2"
+            }`}
           >
             X
           </button>
@@ -820,12 +873,13 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     );
   }
 
-  function renderSection(section: DeckSection, extra?: { droppable?: boolean }) {
+  function renderSection(section: DeckSection, extra?: { droppable?: boolean; stacked?: boolean }) {
     const cards = workingDeck.cards.filter((card) => card.section === section);
     const needed = SECTION_TARGETS[section];
     const count = sectionTotals[section];
     const isComplete = count === needed;
     const droppable = extra?.droppable;
+    const stackedPreview = Boolean(extra?.stacked);
     const accent = SECTION_ACCENTS[section];
     const gridClass = SECTION_GRID_COLUMNS[section] ?? "grid-cols-2";
 
@@ -881,9 +935,107 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           </div>
         ) : (
           <div className={`mt-3 grid gap-3 ${gridClass}`}>
-            {cards.map((card) => renderCardThumb(card))}
+            {cards.map((card) =>
+              renderCardThumb(card, {
+                stackedPreview,
+                stackedHeight: section === "runes" ? 200 : undefined,
+                imageSize: stackedPreview ? "220px" : undefined,
+              })
+            )}
           </div>
         )}
+      </div>
+    );
+  }
+
+  function renderDeckDetailsPanel() {
+    return (
+      <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4 shadow-inner">
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+          <div>
+            <p className="text-[0.65rem] uppercase tracking-[0.4em] text-[#7ce7f4]">Deck Studio</p>
+            <input
+              value={workingDeck.name}
+              onChange={(event) => {
+                setWorkingDeck({ ...workingDeck, name: event.target.value });
+                setDirty(true);
+              }}
+              className="mt-1 w-full bg-transparent text-3xl font-semibold focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">
+              Deck Vault
+              <select
+                value={selectedDeckId}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "new") {
+                    handleSelectDeck(undefined);
+                    return;
+                  }
+                  const nextDeck = decks.find((deck) => deck.id === value);
+                  handleSelectDeck(nextDeck);
+                }}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-[#05070d] px-3 py-2 text-xs uppercase tracking-[0.3em] focus:border-[#f6d38e] focus:outline-none"
+              >
+                <option value="new">New prototype</option>
+                {decks.map((deck) => (
+                  <option key={deck.id} value={deck.id}>
+                    {deck.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3 text-xs text-slate-300">
+          <label className="flex flex-1 flex-col">
+            <span className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">Format</span>
+            <input
+              value={workingDeck.format}
+              onChange={(event) => {
+                setWorkingDeck({ ...workingDeck, format: event.target.value });
+                setDirty(true);
+              }}
+              className="mt-1 rounded-xl border border-white/10 bg-[#05070d] px-3 py-2 text-sm focus:border-[#f6d38e] focus:outline-none"
+              placeholder="Origins"
+            />
+          </label>
+          <label className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2">
+            <input
+              type="checkbox"
+              checked={workingDeck.isPublic}
+              onChange={(event) => {
+                setWorkingDeck({ ...workingDeck, isPublic: event.target.checked });
+                setDirty(true);
+              }}
+              className="h-4 w-4 rounded border-white/20 bg-slate-900"
+            />
+            <span className="text-[0.65rem] uppercase tracking-[0.3em] text-slate-400">Public</span>
+          </label>
+          <button
+            onClick={saveDeck}
+            disabled={
+              workingDeck.name.trim().length === 0 || validation.errors.length > 0 || !dirty
+            }
+            className="rounded-xl border border-[#9ce39a]/50 bg-[#9ce39a]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#c9ffb8] transition hover:bg-[#9ce39a]/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-slate-500"
+          >
+            {saveStatus ?? (workingDeck.id ? "Save changes" : "Save deck")}
+          </button>
+        </div>
+
+        <textarea
+          value={workingDeck.description}
+          onChange={(event) => {
+            setWorkingDeck({ ...workingDeck, description: event.target.value });
+            setDirty(true);
+          }}
+          placeholder="Describe your plan, synergies, matchup notes..."
+          className="w-full rounded-2xl border border-white/10 bg-[#05070d] px-4 py-3 text-sm text-slate-200 focus:border-[#f6d38e] focus:outline-none"
+          rows={3}
+        />
       </div>
     );
   }
@@ -938,6 +1090,75 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         </button>
       </div>
     );
+  }
+
+  function renderMainDeckPanel() {
+    const mainCards = workingDeck.cards.filter((card) => card.section === "main");
+
+    return (
+      <div
+        className="rounded-2xl border border-[#7ce7f4]/40 bg-[#0b111d]/90 p-4"
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
+          event.preventDefault();
+          const raw = event.dataTransfer.getData(DRAG_MIME);
+          try {
+            const payload = JSON.parse(raw) as { cardId: string; section: DeckSection };
+            moveCard(payload.cardId, payload.section, "main");
+          } catch (dropError) {
+            console.error(dropError);
+          }
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[0.65rem] uppercase tracking-[0.35em] text-[#7ce7f4]">Main Deck</p>
+            <p className="text-xs text-slate-400">{SECTION_HINTS.main}</p>
+            <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-500">
+              Sort: Energy › Power › Name
+            </p>
+          </div>
+          <span className="text-sm font-semibold">
+            {sectionTotals.main}/{SECTION_TARGETS.main}
+          </span>
+        </div>
+        {mainCards.length === 0 ? (
+          <p className="mt-3 rounded-2xl border border-dashed border-white/15 px-4 py-6 text-center text-xs text-slate-500">
+            Add cards to your main deck.
+          </p>
+        ) : (
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {mainCards.map((entry) =>
+              renderCardThumb(entry, {
+                stackedPreview: true,
+                imageSize: "280px",
+              })
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function renderStudioTabContent() {
+    switch (activeStudioTab) {
+      case "legend":
+        return renderSection("legend");
+      case "main":
+        return renderMainDeckPanel();
+      case "battlefields":
+        return renderSection("battlefields");
+      case "side":
+        return renderSection("side", { droppable: true, stacked: true });
+      case "runes":
+        return renderSection("runes", { stacked: true });
+      default:
+        return null;
+    }
   }
 
   
@@ -1077,94 +1298,31 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
 
         <section className="rounded-[32px] border border-white/5 bg-[#080d16]/90 p-6 shadow-[0_10px_60px_rgba(0,0,0,0.45)] backdrop-blur">
           <div className="space-y-5">
-            <div className="space-y-4 rounded-2xl border border-white/10 bg-black/30 p-4 shadow-inner">
-              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+            <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
                 <div>
                   <p className="text-[0.65rem] uppercase tracking-[0.4em] text-[#7ce7f4]">Deck Studio</p>
-                  <input
-                    value={workingDeck.name}
-                    onChange={(event) => {
-                      setWorkingDeck({ ...workingDeck, name: event.target.value });
-                      setDirty(true);
-                    }}
-                    className="mt-1 w-full bg-transparent text-3xl font-semibold focus:outline-none"
-                  />
+                  <h3 className="font-display text-2xl text-white">{deckDisplayName}</h3>
+                  <p className="text-xs text-slate-400">Toggle sections without endless scrolling.</p>
                 </div>
-                <div>
-                  <label className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">
-                    Deck Vault
-                    <select
-                      value={selectedDeckId}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        if (value === "new") {
-                          handleSelectDeck(undefined);
-                          return;
-                        }
-                        const nextDeck = decks.find((deck) => deck.id === value);
-                        handleSelectDeck(nextDeck);
-                      }}
-                      className="mt-1 w-full rounded-xl border border-white/10 bg-[#05070d] px-3 py-2 text-xs uppercase tracking-[0.3em] focus:border-[#f6d38e] focus:outline-none"
+                <div className="flex flex-wrap gap-2 text-[0.65rem] uppercase tracking-[0.35em]">
+                  {STUDIO_TABS.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveStudioTab(tab.id)}
+                      className={`rounded-full border px-3 py-1 font-semibold transition ${
+                        activeStudioTab === tab.id
+                          ? "border-[#f6d38e]/80 bg-[#f6d38e]/15 text-[#f6d38e]"
+                          : "border-white/10 text-slate-400 hover:border-[#f6d38e]/40 hover:text-[#f6d38e]"
+                      }`}
                     >
-                      <option value="new">New prototype</option>
-                      {decks.map((deck) => (
-                        <option key={deck.id} value={deck.id}>
-                          {deck.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                      {tab.label}
+                    </button>
+                  ))}
                 </div>
               </div>
-
-              <div className="flex flex-wrap gap-3 text-xs text-slate-300">
-                <label className="flex flex-1 flex-col">
-                  <span className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">Format</span>
-                  <input
-                    value={workingDeck.format}
-                    onChange={(event) => {
-                      setWorkingDeck({ ...workingDeck, format: event.target.value });
-                      setDirty(true);
-                    }}
-                    className="mt-1 rounded-xl border border-white/10 bg-[#05070d] px-3 py-2 text-sm focus:border-[#f6d38e] focus:outline-none"
-                    placeholder="Origins"
-                  />
-                </label>
-                <label className="flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2">
-                  <input
-                    type="checkbox"
-                    checked={workingDeck.isPublic}
-                    onChange={(event) => {
-                      setWorkingDeck({ ...workingDeck, isPublic: event.target.checked });
-                      setDirty(true);
-                    }}
-                    className="h-4 w-4 rounded border-white/20 bg-slate-900"
-                  />
-                  <span className="text-[0.65rem] uppercase tracking-[0.3em] text-slate-400">Public</span>
-                </label>
-                <button
-                  onClick={saveDeck}
-                  disabled={workingDeck.name.trim().length === 0 || validation.errors.length > 0 || !dirty}
-                  className="rounded-xl border border-[#9ce39a]/50 bg-[#9ce39a]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.3em] text-[#c9ffb8] transition hover:bg-[#9ce39a]/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-transparent disabled:text-slate-500"
-                >
-                  {saveStatus ?? (workingDeck.id ? "Save changes" : "Save deck")}
-                </button>
-              </div>
-
-              <textarea
-                value={workingDeck.description}
-                onChange={(event) => {
-                  setWorkingDeck({ ...workingDeck, description: event.target.value });
-                  setDirty(true);
-                }}
-                placeholder="Describe your plan, synergies, matchup notes..."
-                className="w-full rounded-2xl border border-white/10 bg-[#05070d] px-4 py-3 text-sm text-slate-200 focus:border-[#f6d38e] focus:outline-none"
-                rows={3}
-              />
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-              <div className="flex flex-wrap gap-4 text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
+              <div className="mt-4 flex flex-wrap items-center gap-3 text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">
                 {Object.entries(SECTION_LABELS).map(([key, label]) => (
                   <span key={key} className={`${SECTION_ACCENTS[key as DeckSection].badge}`}>
                     {label} {sectionTotals[key as DeckSection]}/{SECTION_TARGETS[key as DeckSection]}
@@ -1173,71 +1331,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
               </div>
             </div>
 
-            <div className="grid gap-4">
-              {renderSection("legend")}
-              <div className="grid gap-4 md:grid-cols-2">
-                {renderSection("battlefields")}
-                {renderSection("runes")}
-              </div>
-              {renderSection("side", { droppable: true })}
-            </div>
+            {activeStudioTab === "legend" && renderDeckDetailsPanel()}
 
-            <div
-              className="rounded-2xl border border-[#7ce7f4]/40 bg-[#0b111d]/90 p-4"
-              onDragOver={(event) => {
-                if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
-                event.preventDefault();
-              }}
-              onDrop={(event) => {
-                if (!event.dataTransfer.types.includes(DRAG_MIME)) return;
-                event.preventDefault();
-                const raw = event.dataTransfer.getData(DRAG_MIME);
-                try {
-                  const payload = JSON.parse(raw) as { cardId: string; section: DeckSection };
-                  moveCard(payload.cardId, payload.section, "main");
-                } catch (dropError) {
-                  console.error(dropError);
-                }
-              }}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[0.65rem] uppercase tracking-[0.35em] text-[#7ce7f4]">Main Deck</p>
-                  <p className="text-xs text-slate-400">{SECTION_HINTS.main}</p>
-                  <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-500">Sort: Energy › Power › Name</p>
-                </div>
-                <span className="text-sm font-semibold">
-                  {sectionTotals.main}/{SECTION_TARGETS.main}
-                </span>
-              </div>
-              {(() => {
-                const mainCards = workingDeck.cards.filter((card) => card.section === "main");
-                if (mainCards.length === 0) {
-                  return (
-                    <p className="mt-3 rounded-2xl border border-dashed border-white/15 px-4 py-6 text-center text-xs text-slate-500">
-                      Add cards to your main deck.
-                    </p>
-                  );
-                }
-                const expanded = mainCards.flatMap((card) =>
-                  Array.from({ length: card.quantity }).map((_, index) => ({
-                    entry: card,
-                    key: `${card.cardId}-${index}`,
-                  }))
-                );
-                return (
-                  <div className={`mt-3 grid gap-3 ${SECTION_GRID_COLUMNS.main}`}>
-                    {expanded.map(({ entry, key }) =>
-                      renderCardThumb(entry, {
-                        keyOverride: key,
-                        hideQuantityBadge: true,
-                        singleCopy: true,
-                      })
-                    )}
-                  </div>
-                );
-              })()}
-            </div>
+            {renderStudioTabContent()}
 
             {error && (
               <p className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
