@@ -4,12 +4,19 @@ import MatchRoom from "@/src/components/match/MatchRoom";
 import type { MatchEventRecord, MatchState, MatchSummary } from "@/src/types/match";
 
 interface MatchPageProps {
-  params: { code: string };
+  params?: { code?: string } | Promise<{ code?: string }>;
 }
 
 export default async function MatchPage({ params }: MatchPageProps) {
-  const code = params.code.toUpperCase();
-  const supabase = createSupabaseServerClient();
+  const resolvedParams = params instanceof Promise ? await params : params;
+  const rawCode = resolvedParams?.code;
+
+  if (!rawCode) {
+    notFound();
+  }
+
+  const code = rawCode.toUpperCase();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -5,7 +5,7 @@ import { assignPlayerTwo } from "@/src/lib/matchState";
 import type { MatchState } from "@/src/types/match";
 
 export async function POST(request: Request) {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
     error: userError,

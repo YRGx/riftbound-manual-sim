@@ -4,7 +4,7 @@ import LobbyClient from "@/src/components/lobby/LobbyClient";
 import type { MatchSummary } from "@/src/types/match";
 
 export default async function LobbyPage() {
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

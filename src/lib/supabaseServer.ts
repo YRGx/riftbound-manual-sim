@@ -8,7 +8,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error("Missing Supabase URL or anon key. Check your environment variables.");
 }
 
-type CookieStore = ReturnType<typeof cookies>;
+type CookieStore = Awaited<ReturnType<typeof cookies>>;
 
 function setCookie(
   cookieStore: CookieStore,
@@ -25,21 +25,20 @@ function setCookie(
   });
 }
 
-export function createSupabaseServerClient() {
-  const cookieStore = cookies();
+export async function createSupabaseServerClient() {
+  const cookieStore = await cookies();
 
   return createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
-      get(name: string) {
-        return cookieStore.get(name)?.value;
+      getAll() {
+        return cookieStore.getAll().map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+        }));
       },
-      set(name: string, value: string, options?: CookieOptions) {
-        setCookie(cookieStore, name, value, options);
-      },
-      remove(name: string, options?: CookieOptions) {
-        setCookie(cookieStore, name, "", {
-          ...options,
-          maxAge: 0,
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value, options }) => {
+          setCookie(cookieStore, name, value, options);
         });
       },
     },

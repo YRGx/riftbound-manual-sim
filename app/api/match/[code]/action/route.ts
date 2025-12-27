@@ -45,7 +45,7 @@ export async function POST(
   { params }: { params: { code: string } }
 ) {
   const { code } = params;
-  const supabase = createSupabaseServerClient();
+  const supabase = await createSupabaseServerClient();
   const {
     data: { user },
     error: userError,
