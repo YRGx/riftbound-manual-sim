@@ -18,14 +18,7 @@ export default function AuthForm() {
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: redirectTo
-        ? {
-            redirectTo,
-            flowType: "pkce",
-          }
-        : {
-            flowType: "pkce",
-          },
+      options: redirectTo ? { redirectTo } : undefined,
     });
 
     if (error) {

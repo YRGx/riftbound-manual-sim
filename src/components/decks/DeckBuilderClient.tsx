@@ -729,6 +729,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     containerClass?: string;
     imageSize?: string;
     stackedPreview?: boolean;
+    stackedHeight?: number;
   };
 
   function renderCardThumb(entry: DeckCardEntry, options?: ThumbOptions) {
@@ -776,6 +777,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       <div
         key={key}
         className={`group relative rounded-2xl border border-white/5 bg-[#060a15]/80 p-1.5 ${options?.containerClass ?? ""}`}
+        style={options?.stackedHeight ? { minHeight: options.stackedHeight } : undefined}
         draggable={canDrag}
         onDragStart={(event) => {
           if (!canDrag) return;
@@ -1190,7 +1192,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         </div>
       </div>
 
-      <main className="grid min-h-[calc(100vh-120px)] w-full gap-6 px-4 py-8 lg:grid-cols-[minmax(520px,1.35fr)_minmax(0,0.75fr)] 2xl:grid-cols-[minmax(640px,1.5fr)_minmax(0,0.7fr)]">
+      <main className="grid min-h-[calc(100vh-120px)] w-full gap-6 px-4 py-8 lg:grid-cols-[minmax(540px,1.2fr)_minmax(520px,0.9fr)] 2xl:grid-cols-[minmax(680px,1.35fr)_minmax(600px,0.95fr)]">
         <section className="rounded-[32px] border border-white/5 bg-gradient-to-b from-[#161c2f] via-[#101629] to-[#090f1c] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.6)]">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -1298,36 +1300,50 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
 
         <section className="rounded-[32px] border border-white/5 bg-[#080d16]/90 p-6 shadow-[0_10px_60px_rgba(0,0,0,0.45)] backdrop-blur">
           <div className="space-y-5">
-            <div className="rounded-2xl border border-white/10 bg-black/25 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div>
-                  <p className="text-[0.65rem] uppercase tracking-[0.4em] text-[#7ce7f4]">Deck Studio</p>
-                  <h3 className="font-display text-2xl text-white">{deckDisplayName}</h3>
-                  <p className="text-xs text-slate-400">Toggle sections without endless scrolling.</p>
-                </div>
-                <div className="flex flex-wrap gap-2 text-[0.65rem] uppercase tracking-[0.35em]">
-                  {STUDIO_TABS.map((tab) => (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setActiveStudioTab(tab.id)}
-                      className={`rounded-full border px-3 py-1 font-semibold transition ${
-                        activeStudioTab === tab.id
-                          ? "border-[#f6d38e]/80 bg-[#f6d38e]/15 text-[#f6d38e]"
-                          : "border-white/10 text-slate-400 hover:border-[#f6d38e]/40 hover:text-[#f6d38e]"
-                      }`}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
+            <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="flex items-center justify-between">
+                <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-400">Deck Studio</p>
+                <span className="text-[0.6rem] uppercase tracking-[0.3em] text-slate-500">
+                  Active deck: {deckDisplayName}
+                </span>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <div
+                  role="tablist"
+                  className="flex min-w-max flex-nowrap gap-4 border-b border-white/10 pb-1"
+                >
+                  {STUDIO_TABS.map((tab) => {
+                    const isActive = activeStudioTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        onClick={() => setActiveStudioTab(tab.id)}
+                        className={`relative whitespace-nowrap px-2 pb-3 pt-2 text-[0.65rem] font-semibold uppercase tracking-[0.35em] transition ${
+                          isActive ? "text-[#f6d38e]" : "text-slate-400 hover:text-[#f6d38e]"
+                        }`}
+                      >
+                        {tab.label}
+                        <span
+                          className={`absolute bottom-0 left-0 right-0 mx-auto h-0.5 rounded-full transition ${
+                            isActive ? "bg-[#f6d38e]" : "bg-transparent"
+                          }`}
+                        />
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-3 text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">
-                {Object.entries(SECTION_LABELS).map(([key, label]) => (
-                  <span key={key} className={`${SECTION_ACCENTS[key as DeckSection].badge}`}>
-                    {label} {sectionTotals[key as DeckSection]}/{SECTION_TARGETS[key as DeckSection]}
-                  </span>
-                ))}
+              <div className="mt-3 overflow-x-auto whitespace-nowrap text-[0.6rem] uppercase tracking-[0.3em] text-slate-400">
+                <div className="flex flex-nowrap items-center gap-4">
+                  {Object.entries(SECTION_LABELS).map(([key, label]) => (
+                    <span key={key} className={`${SECTION_ACCENTS[key as DeckSection].badge}`}>
+                      {label} {sectionTotals[key as DeckSection]}/{SECTION_TARGETS[key as DeckSection]}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
 
