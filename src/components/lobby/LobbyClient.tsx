@@ -108,6 +108,12 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
         </div>
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
+            onClick={() => router.push("/decks")}
+            className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white hover:border-cyan-400"
+          >
+            Deck Builder
+          </button>
+          <button
             onClick={refreshMatches}
             className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white hover:border-cyan-400"
           >
