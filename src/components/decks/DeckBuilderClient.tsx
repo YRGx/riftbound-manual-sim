@@ -757,26 +757,11 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       ? "right-2 top-2"
       : "left-2 top-2";
     const countBadgeStyles = isRuneEntry
-      ? {
-          text: "text-[#f4e6ff]",
-          border: "border border-[#c9a2ff]/60",
-          bg: "bg-[#1b0f2d]/95",
-          shadow: "shadow-[0_12px_35px_rgba(185,135,255,0.35)]",
-        }
+      ? { text: "text-[#c9a2ff]", border: "border-[#c9a2ff]/50" }
       : isMainEntry
-      ? {
-          text: "text-[#d5f9ff]",
-          border: "border border-[#7ce7f4]/60",
-          bg: "bg-[#041c23]/95",
-          shadow: "shadow-[0_12px_35px_rgba(124,231,244,0.25)]",
-        }
+      ? { text: "text-[#7ce7f4]", border: "border-[#7ce7f4]/50" }
       : isSideEntry
-      ? {
-          text: "text-[#edffe3]",
-          border: "border border-[#c9ffb8]/60",
-          bg: "bg-[#132611]/95",
-          shadow: "shadow-[0_12px_35px_rgba(201,255,184,0.25)]",
-        }
+      ? { text: "text-[#c9ffb8]", border: "border-[#c9ffb8]/50" }
       : null;
 
     const handleCardClick = () => {
@@ -851,9 +836,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             renderImage()
           )}
           {countBadgeStyles && (
-            <div className="pointer-events-none absolute left-1/2 top-2 z-40 -translate-x-1/2">
+            <div className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
               <span
-                className={`min-w-[58px] rounded-full px-5 py-1.5 text-[1.35rem] font-black leading-none tracking-[0.15em] drop-shadow-[0_8px_18px_rgba(0,0,0,0.65)] ${countBadgeStyles.bg} ${countBadgeStyles.text} ${countBadgeStyles.border} ${countBadgeStyles.shadow}`}
+                className={`rounded-full bg-black/70 px-4 py-0.5 text-lg font-bold ${countBadgeStyles.text} ${countBadgeStyles.border}`}
                 aria-label={`${entry.quantity} copies of ${entry.cardName}`}
               >
                 {entry.quantity}
@@ -947,21 +932,14 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const count = sectionTotals[section];
     const isComplete = count === needed;
     const droppable = extra?.droppable;
-    const stackedPreview = Boolean(extra?.stacked);
+    const baseStackedPreview = Boolean(extra?.stacked);
+    const wantsMainDeckSizing = section === "side" || section === "runes";
     const accent = SECTION_ACCENTS[section];
-    const gridClass = SECTION_GRID_COLUMNS[section] ?? "grid-cols-2";
-    const cardThumbOptions: ThumbOptions | undefined = (() => {
-      if (section === "runes" || section === "side") {
-        return { stackedPreview: true, imageSize: "280px" };
-      }
-      if (stackedPreview) {
-        return { stackedPreview: true, imageSize: "220px" };
-      }
-      if (section === "battlefields") {
-        return { imageSize: "220px" };
-      }
-      return undefined;
-    })();
+    const defaultColumns = SECTION_GRID_COLUMNS[section] ?? "grid-cols-2";
+    const gridColumns = wantsMainDeckSizing
+      ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+      : defaultColumns;
+    const gridGap = wantsMainDeckSizing ? "gap-3" : "gap-4";
 
     return (
       <div
@@ -1014,9 +992,24 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             )}
           </div>
         ) : (
-          <div className={`mt-3 grid gap-4 ${gridClass}`}>
+          <div className={`mt-3 grid ${gridGap} ${gridColumns}`}>
             {cards.map((card) =>
-              renderCardThumb(card, cardThumbOptions)
+              renderCardThumb(card, {
+                stackedPreview: wantsMainDeckSizing ? true : baseStackedPreview,
+                imageSize: wantsMainDeckSizing
+                  ? "280px"
+                  : section === "runes"
+                  ? "260px"
+                  : baseStackedPreview
+                  ? "220px"
+                  : undefined,
+                containerClass:
+                  wantsMainDeckSizing
+                    ? undefined
+                    : section === "runes"
+                    ? "min-h-[280px]"
+                    : undefined,
+              })
             )}
           </div>
         )}
