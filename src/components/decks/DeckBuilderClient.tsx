@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Image from "next/image";
@@ -60,6 +60,21 @@ const STUDIO_TABS = [
 ] as const;
 
 type StudioTab = (typeof STUDIO_TABS)[number]["id"];
+
+const STUDIO_TO_LIBRARY: Partial<Record<StudioTab, LibraryTab>> = {
+  legend: "legend",
+  main: "main",
+  side: "main",
+  battlefields: "battlefields",
+  runes: "runes",
+};
+
+const LIBRARY_TO_STUDIO: Partial<Record<LibraryTab, StudioTab>> = {
+  legend: "legend",
+  main: "main",
+  battlefields: "battlefields",
+  runes: "runes",
+};
 
 const SECTION_ACCENTS: Record<DeckSection, { border: string; badge: string }> = {
   legend: { border: "border-[#f6d38e]/60", badge: "text-[#f6d38e]" },
@@ -207,6 +222,22 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
   const libraryScrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const hasLoadedLibraryPages = useRef(false);
+
+  const handleLibraryTabChange = (tabId: LibraryTab) => {
+    setActiveLibraryTab((prev) => (prev === tabId ? prev : tabId));
+    const linkedStudio = LIBRARY_TO_STUDIO[tabId];
+    if (linkedStudio) {
+      setActiveStudioTab((prev) => (prev === linkedStudio ? prev : linkedStudio));
+    }
+  };
+
+  const handleStudioTabChange = (tabId: StudioTab) => {
+    setActiveStudioTab((prev) => (prev === tabId ? prev : tabId));
+    const linkedLibrary = STUDIO_TO_LIBRARY[tabId];
+    if (linkedLibrary) {
+      setActiveLibraryTab((prev) => (prev === linkedLibrary ? prev : linkedLibrary));
+    }
+  };
 
   const legendCard = useMemo(
     () => workingDeck.cards.find((card) => card.section === "legend"),
@@ -746,23 +777,32 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const fit = battlefield ? "object-contain" : runeArtwork ? "object-contain" : "object-cover";
     const imageUrl = entry.card?.media.image_url;
     const key = options?.keyOverride ?? `${entry.cardId}-${entry.section}`;
-    const isStackedPreview = Boolean(options?.stackedPreview);
+    const isStackedPreview = options?.stackedPreview ?? (isMainEntry || isSideEntry);
     const stackPreviewCopies = isStackedPreview ? Math.min(entry.quantity, 4) : 1;
     const stackPadding = battlefield ? "75%" : "140%";
     const displayQuantity = options?.singleCopy ? 1 : entry.quantity;
-    const showQuantityBadge = !(isRuneEntry || isMainEntry || isSideEntry) && !options?.hideQuantityBadge && displayQuantity > 1;
+    const showTopQuantityBadge =
+      !options?.hideQuantityBadge && (isRuneEntry || isMainEntry || isSideEntry) && displayQuantity > 1;
+    const showQuantityBadge = !showTopQuantityBadge && !options?.hideQuantityBadge && displayQuantity > 1;
     const quantityBadgePosition = isRuneEntry
       ? "left-2 bottom-2"
       : isStackedPreview
       ? "right-2 top-2"
       : "left-2 top-2";
-    const countBadgeStyles = isRuneEntry
-      ? { text: "text-[#c9a2ff]", border: "border-[#c9a2ff]/50" }
+    const quantityBadgeAccent = isRuneEntry
+      ? "text-[#c9a2ff] border-[#c9a2ff]/50"
       : isMainEntry
-      ? { text: "text-[#7ce7f4]", border: "border-[#7ce7f4]/50" }
+      ? "text-[#7ce7f4] border-[#7ce7f4]/50"
       : isSideEntry
-      ? { text: "text-[#c9ffb8]", border: "border-[#c9ffb8]/50" }
-      : null;
+      ? "text-[#c9ffb8] border-[#c9ffb8]/50"
+      : "text-white border-white/30";
+    const topBadgeAccent = isRuneEntry
+      ? "text-[#c9a2ff]"
+      : isMainEntry
+      ? "text-[#7ce7f4]"
+      : isSideEntry
+      ? "text-[#c9ffb8]"
+      : "text-white";
 
     const handleCardClick = () => {
       if (!entry.card) return;
@@ -835,19 +875,20 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           ) : (
             renderImage()
           )}
-          {countBadgeStyles && (
-            <div className="pointer-events-none absolute inset-x-0 top-2 flex justify-center">
+          {showTopQuantityBadge && (
+            <div className="pointer-events-none absolute inset-x-0 top-2 z-30 flex justify-center">
               <span
-                className={`rounded-full bg-black/70 px-4 py-0.5 text-lg font-bold ${countBadgeStyles.text} ${countBadgeStyles.border}`}
-                aria-label={`${entry.quantity} copies of ${entry.cardName}`}
+                className={`rounded-full bg-black/70 px-4 py-0.5 text-lg font-bold ${topBadgeAccent}`}
+                aria-label={`${displayQuantity} copies of ${entry.cardName}`}
               >
-                {entry.quantity}
+                x{entry.quantity}
               </span>
             </div>
           )}
           {showQuantityBadge && (
             <span
-              className={`pointer-events-none absolute rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white ${quantityBadgePosition}`}
+              className={`pointer-events-none absolute z-20 rounded-full border bg-black/70 px-2 py-0.5 text-xs font-semibold ${quantityBadgeAccent} ${quantityBadgePosition}`}
+              aria-label={`${displayQuantity} copies of ${entry.cardName}`}
             >
               x{entry.quantity}
             </span>
@@ -933,7 +974,8 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     const isComplete = count === needed;
     const droppable = extra?.droppable;
     const baseStackedPreview = Boolean(extra?.stacked);
-    const wantsMainDeckSizing = section === "side" || section === "runes";
+    const isRuneSection = section === "runes";
+    const wantsMainDeckSizing = section === "side" || isRuneSection;
     const accent = SECTION_ACCENTS[section];
     const defaultColumns = SECTION_GRID_COLUMNS[section] ?? "grid-cols-2";
     const gridColumns = wantsMainDeckSizing
@@ -978,7 +1020,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         </div>
         {cards.length === 0 ? (
           <p className="mt-3 rounded-2xl border border-dashed border-white/10 px-3 py-4 text-center text-xs text-slate-500">
-            Empty — add cards from the library.
+            Empty ΓÇö add cards from the library.
           </p>
         ) : section === "legend" ? (
           <div className="mt-3 flex justify-center">
@@ -998,7 +1040,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
                 stackedPreview: wantsMainDeckSizing ? true : baseStackedPreview,
                 imageSize: wantsMainDeckSizing
                   ? "280px"
-                  : section === "runes"
+                  : isRuneSection
                   ? "260px"
                   : baseStackedPreview
                   ? "220px"
@@ -1006,7 +1048,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
                 containerClass:
                   wantsMainDeckSizing
                     ? undefined
-                    : section === "runes"
+                    : isRuneSection
                     ? "min-h-[280px]"
                     : undefined,
               })
@@ -1188,7 +1230,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             <p className="text-[0.65rem] uppercase tracking-[0.35em] text-[#7ce7f4]">Main Deck</p>
             <p className="text-xs text-slate-400">{SECTION_HINTS.main}</p>
             <p className="text-[0.6rem] uppercase tracking-[0.35em] text-slate-500">
-              Sort: Energy › Power › Name
+              Sort: Energy ΓÇ║ Power ΓÇ║ Name
             </p>
           </div>
           <span className="text-sm font-semibold">
@@ -1283,7 +1325,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             {LIBRARY_TABS.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveLibraryTab(tab.id)}
+                onClick={() => handleLibraryTabChange(tab.id)}
                 className={`rounded-full border px-4 py-1 text-[0.65rem] font-semibold uppercase tracking-[0.35em] transition ${
                   activeLibraryTab === tab.id
                     ? "border-[#f6d38e] bg-[#f6d38e]/15 text-[#f6d38e]"
@@ -1340,7 +1382,8 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
                             src={card.media.image_url}
                             alt={card.name}
                             fill
-                            sizes="220px"
+                            quality={100}
+                            sizes="(min-width: 1600px) 320px, (min-width: 1024px) 280px, (min-width: 640px) 45vw, 85vw"
                             className={fit}
                           />
                         )}
@@ -1394,7 +1437,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
                         type="button"
                         role="tab"
                         aria-selected={isActive}
-                        onClick={() => setActiveStudioTab(tab.id)}
+                        onClick={() => handleStudioTabChange(tab.id)}
                         className={`relative whitespace-nowrap px-2 pb-3 pt-2 text-[0.65rem] font-semibold uppercase tracking-[0.35em] transition ${
                           isActive ? "text-[#f6d38e]" : "text-slate-400 hover:text-[#f6d38e]"
                         }`}
