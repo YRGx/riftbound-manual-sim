@@ -84,6 +84,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       card_domains: card.cardDomains ?? [],
       card_supertype: card.cardSupertype ?? null,
       card_type: card.cardType ?? null,
+      card_tags: card.cardTags ?? [],
     }));
 
     const { error: insertError } = await supabase.from("deck_cards").insert(rows);
@@ -95,7 +96,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
   const { data: fullDeckRow, error: fetchError } = await supabase
     .from("decks")
     .select(
-      "id, owner_id, name, description, format, cover_card_id, is_public, created_at, updated_at, deck_cards(card_id, card_name, card_public_code, quantity, section, card_domains, card_supertype, card_type)"
+      "id, owner_id, name, description, format, cover_card_id, is_public, created_at, updated_at, deck_cards(card_id, card_name, card_public_code, quantity, section, card_domains, card_supertype, card_type, card_tags)"
     )
     .eq("id", deckId)
     .single();

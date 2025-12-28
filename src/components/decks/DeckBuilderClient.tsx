@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { SECTION_TARGETS, validateDeckRules } from "@/src/lib/decks";
+import { MAX_CARD_COPIES, SECTION_TARGETS, validateDeckRules } from "@/src/lib/decks";
 import type { DeckSummary, DeckCardEntry, DeckSection } from "@/src/types/deck";
 import type { RiftCard, RiftCardListResponse } from "@/src/types/card";
 
@@ -21,7 +21,6 @@ type WorkingDeck = {
   cards: DeckCardEntry[];
 };
 
-const MAX_CARD_COPIES = 3;
 const DRAG_MIME = "application/riftbound-card";
 
 const SECTION_LABELS: Record<DeckSection, string> = {
@@ -93,6 +92,7 @@ const SECTION_GRID_COLUMNS: Record<DeckSection, string> = {
 };
 
 const LIBRARY_PAGE_SIZE = 60;
+const MAIN_AND_SIDE_SECTIONS: DeckSection[] = ["main", "side"];
 
 const emptyDeck = (): WorkingDeck => ({
   name: "Untitled Prototype",
@@ -129,6 +129,7 @@ function createEntry(card: RiftCard, section: DeckSection, quantity = 1): DeckCa
     cardDomains: card.classification?.domain ?? [],
     cardSupertype: card.classification?.supertype ?? null,
     cardType: card.classification?.type ?? null,
+    cardTags: card.tags ?? [],
     card,
   };
 }
@@ -489,7 +490,17 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
           return prev;
         }
         const nextCards = [...prev.cards];
-        nextCards[existingIndex] = { ...existing, quantity: nextQuantity, card: card.card ?? existing.card };
+        nextCards[existingIndex] = {
+          ...existing,
+          quantity: nextQuantity,
+          card: card.card ?? existing.card,
+          cardTags:
+            card.cardTags ??
+            existing.cardTags ??
+            card.card?.tags ??
+            existing.card?.tags ??
+            [],
+        };
         setDirty(true);
         return { ...prev, cards: nextCards };
       }
@@ -522,7 +533,40 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
     return card.cardSupertype ?? "";
   }
 
-  function canAddToSection(card: CardLike, section: DeckSection, quantity = 1): string | null {
+  function cardIdentifier(card: CardLike) {
+    if ("classification" in card) {
+      return card.id;
+    }
+    return card.cardId;
+  }
+
+  function sumCopiesAcrossSections(
+    cards: DeckCardEntry[],
+    targetCardId: string,
+    sections: DeckSection[],
+    exclude?: { section: DeckSection; quantity: number }
+  ) {
+    let remainingExclude = exclude?.quantity ?? 0;
+    return cards.reduce((sum, entry) => {
+      if (entry.cardId !== targetCardId || !sections.includes(entry.section)) {
+        return sum;
+      }
+      let quantity = entry.quantity;
+      if (exclude && entry.section === exclude.section && remainingExclude > 0) {
+        const deduction = Math.min(quantity, remainingExclude);
+        quantity -= deduction;
+        remainingExclude -= deduction;
+      }
+      return sum + quantity;
+    }, 0);
+  }
+
+  function canAddToSection(
+    card: CardLike,
+    section: DeckSection,
+    quantity = 1,
+    options?: { exclude?: { section: DeckSection; quantity: number } }
+  ): string | null {
     if (section === "legend") {
       if (sectionTotals.legend >= SECTION_TARGETS.legend) {
         return "Legend slot already filled.";
@@ -572,6 +616,15 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       if (sectionTotals.side + quantity > SECTION_TARGETS.side) {
         return "Side deck limit reached.";
       }
+      const totalCopies = sumCopiesAcrossSections(
+        workingDeck.cards,
+        cardIdentifier(card),
+        MAIN_AND_SIDE_SECTIONS,
+        options?.exclude
+      );
+      if (totalCopies + quantity > MAX_CARD_COPIES) {
+        return `You can only run ${MAX_CARD_COPIES} copies between main and side.`;
+      }
       return null;
     }
 
@@ -584,6 +637,15 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       }
       if (sectionTotals.main + quantity > SECTION_TARGETS.main) {
         return "Main deck is capped at 40 cards.";
+      }
+      const totalCopies = sumCopiesAcrossSections(
+        workingDeck.cards,
+        cardIdentifier(card),
+        MAIN_AND_SIDE_SECTIONS,
+        options?.exclude
+      );
+      if (totalCopies + quantity > MAX_CARD_COPIES) {
+        return `You can only run ${MAX_CARD_COPIES} copies between main and side.`;
       }
       return null;
     }
@@ -638,6 +700,21 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         return prev;
       }
 
+      if (
+        (section === "main" || section === "side") &&
+        nextQuantity > entry.quantity
+      ) {
+        const combinedExcludingCurrent = sumCopiesAcrossSections(
+          prev.cards,
+          entry.cardId,
+          MAIN_AND_SIDE_SECTIONS,
+          { section, quantity: entry.quantity }
+        );
+        if (combinedExcludingCurrent + nextQuantity > MAX_CARD_COPIES) {
+          return prev;
+        }
+      }
+
       if (nextQuantity === entry.quantity) {
         return prev;
       }
@@ -675,7 +752,9 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
       }
 
       const entry = prev.cards[index];
-      const guard = canAddToSection(entry, toSection, entry.quantity);
+      const guard = canAddToSection(entry, toSection, entry.quantity, {
+        exclude: { section: fromSection, quantity: entry.quantity },
+      });
       if (guard) {
         setError(guard);
         return prev;
@@ -720,6 +799,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
         cardDomains: card.cardDomains,
         cardSupertype: card.cardSupertype ?? card.card?.classification?.supertype ?? null,
         cardType: card.cardType ?? card.card?.classification?.type ?? null,
+        cardTags: card.cardTags ?? card.card?.tags ?? [],
       })),
     };
 
@@ -1392,13 +1472,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
                           {card.name}
                         </div>
                       </div>
-                      <div className="flex flex-1 flex-col gap-3 border-t border-white/5 p-4 text-sm">
-                        <p className="text-[0.65rem] uppercase tracking-[0.35em] text-slate-400">
-                          {card.classification?.type ?? "Unknown"}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {(card.classification?.domain ?? []).join(", ")}
-                        </p>
+                      <div className="border-t border-white/5 p-4">
                         {renderLibraryActions(card)}
                       </div>
                     </div>
@@ -1521,10 +1595,7 @@ export default function DeckBuilderClient({ initialDecks }: DeckBuilderClientPro
             const aspect = battlefield ? "aspect-[4/3]" : "aspect-[5/7]";
             const fit = battlefield ? "object-contain" : "object-cover";
             return (
-              <div
-                className="relative w-full max-w-2xl rounded-[32px] border border-white/10 bg-[#05070d] p-4"
-                onClick={(event) => event.stopPropagation()}
-              >
+              <div className="relative w-full max-w-2xl rounded-[32px] border border-white/10 bg-[#05070d] p-4">
                 <button
                   type="button"
                   onClick={() => setExpandedCard(null)}

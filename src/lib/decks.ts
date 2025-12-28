@@ -8,6 +8,8 @@ export const SECTION_TARGETS: Record<DeckSection, number> = {
   side: 8,
 };
 
+export const MAX_CARD_COPIES = 3;
+
 export function mapDeckRow(row: any): DeckSummary {
   const cards: DeckCardEntry[] = Array.isArray(row?.deck_cards)
     ? row.deck_cards.map((card: any) => ({
@@ -19,6 +21,7 @@ export function mapDeckRow(row: any): DeckSummary {
         cardDomains: Array.isArray(card.card_domains) ? card.card_domains : [],
         cardSupertype: card.card_supertype,
         cardType: card.card_type,
+        cardTags: Array.isArray(card.card_tags) ? card.card_tags : [],
       }))
     : [];
 
@@ -45,6 +48,7 @@ export interface DeckPayloadCard {
   cardDomains?: string[];
   cardSupertype?: string | null;
   cardType?: string | null;
+  cardTags?: string[];
 }
 
 export interface DeckPayload {
@@ -74,6 +78,7 @@ export function normalizeDeckPayload(payload: DeckPayload) {
       cardDomains: Array.isArray(card.cardDomains) ? card.cardDomains : [],
       cardSupertype: card.cardSupertype ?? null,
       cardType: card.cardType ?? null,
+      cardTags: Array.isArray(card.cardTags) ? card.cardTags : [],
     }));
 
   return {
@@ -90,6 +95,12 @@ function sumSection(cards: DeckPayloadCard[], section: DeckSection) {
 
 export function validateDeckRules(cards: DeckPayloadCard[]): DeckValidationResult {
   const errors: string[] = [];
+  const cardNames = new Map<string, string>();
+  cards.forEach((card) => {
+    if (!cardNames.has(card.cardId)) {
+      cardNames.set(card.cardId, card.cardName);
+    }
+  });
 
   const legendCards = cards.filter((card) => card.section === "legend");
   const legendCount = legendCards.reduce((sum, card) => sum + card.quantity, 0);
@@ -122,21 +133,42 @@ export function validateDeckRules(cards: DeckPayloadCard[]): DeckValidationResul
     errors.push("Side deck must contain exactly 8 cards.");
   }
 
+  const combinedCounts = new Map<string, number>();
+  cards
+    .filter((card) => card.section === "main" || card.section === "side")
+    .forEach((card) => {
+      const current = combinedCounts.get(card.cardId) ?? 0;
+      combinedCounts.set(card.cardId, current + card.quantity);
+    });
+  combinedCounts.forEach((total, cardId) => {
+    if (total > MAX_CARD_COPIES) {
+      const cardName = cardNames.get(cardId) ?? "A card";
+      errors.push(`${cardName} exceeds the ${MAX_CARD_COPIES}-copy limit across main and side decks.`);
+    }
+  });
+
   if (legendCard) {
     const legendDomains = legendCard.cardDomains ?? [];
-    const championCandidate = cards.find(
-      (card) => card.section === "main" && card.cardName === legendCard.cardName
-    );
-    if (!championCandidate) {
-      errors.push("Main deck must include a champion unit that shares the legend's name.");
+    const legendTags = (legendCard.cardTags ?? []).map((tag) => tag.toLowerCase());
+    const championCandidates = cards.filter((card) => {
+      if (card.section !== "main") {
+        return false;
+      }
+      const supertype = card.cardSupertype?.toLowerCase() ?? "";
+      const type = card.cardType?.toLowerCase() ?? "";
+      return supertype === "champion" || type.includes("champion");
+    });
+
+    if (legendTags.length === 0) {
+      errors.push("Legend card must include at least one tag to pair with a champion.");
     } else {
-      const supertype = championCandidate.cardSupertype?.toLowerCase() ?? "";
-      const type = championCandidate.cardType?.toLowerCase() ?? "";
-      if (supertype || type) {
-        const isChampion = supertype === "champion" || type.includes("champion");
-        if (!isChampion) {
-          errors.push("The legend's namesake in the main deck must be a champion unit.");
-        }
+      const matchingChampion = championCandidates.find((card) => {
+        const tags = (card.cardTags ?? []).map((tag) => tag.toLowerCase());
+        return tags.some((tag) => legendTags.includes(tag));
+      });
+
+      if (!matchingChampion) {
+        errors.push("Main deck must include a champion that shares a tag with the legend.");
       }
     }
 

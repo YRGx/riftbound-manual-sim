@@ -11,6 +11,7 @@ export interface DeckCardEntry {
   cardDomains: string[];
   cardSupertype?: string | null;
   cardType?: string | null;
+  cardTags?: string[];
   card?: RiftCard;
 }
 
