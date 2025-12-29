@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/src/lib/supabaseClient";
 import type { MatchSummary } from "@/src/types/match";
 
 interface LobbyClientProps {
   initialMatches: MatchSummary[];
+  decks: { id: string; name: string }[];
   userId: string;
 }
 
@@ -16,12 +17,13 @@ type PlayerLayout = {
   right: string[];
 };
 
-export default function LobbyClient({ initialMatches, userId }: LobbyClientProps) {
+export default function LobbyClient({ initialMatches, decks, userId }: LobbyClientProps) {
   const router = useRouter();
   const [matches, setMatches] = useState(initialMatches);
   const [codeInput, setCodeInput] = useState("");
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [selectedDeckId, setSelectedDeckId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
   const activeMatches = useMemo(
@@ -44,7 +46,26 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
     }
   }
 
+  useEffect(() => {
+    const stored = window.localStorage.getItem("selectedDeckId") ?? "";
+    if (stored && decks.some((deck) => deck.id === stored)) {
+      setSelectedDeckId(stored);
+    } else if (decks.length > 0) {
+      setSelectedDeckId(decks[0].id);
+      window.localStorage.setItem("selectedDeckId", decks[0].id);
+    }
+  }, [decks]);
+
+  function ensureDeckSelected() {
+    if (!selectedDeckId) {
+      setError("Select a deck before creating or joining a match.");
+      return false;
+    }
+    return true;
+  }
+
   async function handleCreate() {
+    if (!ensureDeckSelected()) return;
     setCreating(true);
     setError(null);
     const response = await fetch("/api/match/create", { method: "POST" });
@@ -56,6 +77,7 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
       return;
     }
 
+    window.localStorage.setItem(`matchDeck:${payload.code}`, selectedDeckId);
     router.push(`/match/${payload.code}`);
   }
 
@@ -66,6 +88,8 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
       setError("Enter a match code");
       return;
     }
+
+    if (!ensureDeckSelected()) return;
 
     setJoining(true);
     setError(null);
@@ -83,6 +107,7 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
       return;
     }
 
+    window.localStorage.setItem(`matchDeck:${payload.code}`, selectedDeckId);
     router.push(`/match/${payload.code}`);
   }
 
@@ -175,6 +200,36 @@ export default function LobbyClient({ initialMatches, userId }: LobbyClientProps
           </button>
         </div>
       </header>
+
+      <section className="rounded-2xl border border-white/5 bg-slate-900/70 p-6 backdrop-blur">
+        <h2 className="text-lg font-semibold">Select your deck</h2>
+        <p className="text-sm text-slate-300">This deck will be used when you enter a match.</p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+          <select
+            value={selectedDeckId}
+            onChange={(event) => {
+              const value = event.target.value;
+              setSelectedDeckId(value);
+              window.localStorage.setItem("selectedDeckId", value);
+              setError(null);
+            }}
+            className="w-full rounded-lg border border-white/10 bg-slate-950/40 px-3 py-2 text-sm text-white focus:border-cyan-400 focus:outline-none"
+          >
+            <option value="">Select a deck...</option>
+            {decks.map((deck) => (
+              <option key={deck.id} value={deck.id}>
+                {deck.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => router.push("/decks")}
+            className="rounded-xl border border-white/10 px-4 py-2 text-sm text-white hover:border-cyan-400"
+          >
+            Manage decks
+          </button>
+        </div>
+      </section>
 
       <section className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-4 rounded-2xl border border-white/5 bg-slate-900/70 p-6 backdrop-blur">

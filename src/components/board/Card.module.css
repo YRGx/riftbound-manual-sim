@@ -1,0 +1,55 @@
+.card {
+  position: absolute;
+  width: calc(var(--card-width-pct) * 1%);
+  height: calc(var(--card-height-pct) * 1%);
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(26, 155, 180, 0.9), rgba(7, 52, 78, 0.95));
+  border: 1px solid rgba(190, 235, 255, 0.65);
+  color: #e9fbff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  touch-action: none;
+  cursor: grab;
+  transition: left 140ms ease, top 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.cardInner {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: linear-gradient(180deg, rgba(4, 12, 20, 0.15), rgba(4, 12, 20, 0.55));
+  border-radius: 9px;
+}
+
+.cardTitle {
+  pointer-events: none;
+}
+
+.selected {
+  outline: 2px solid rgba(0, 229, 255, 0.9);
+  outline-offset: 2px;
+}
+
+.dragging {
+  cursor: grabbing;
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.55);
+  transition: none;
+}
+
+.faceDown {
+  background: linear-gradient(145deg, rgba(5, 12, 24, 0.95), rgba(20, 40, 72, 0.9));
+  border-color: rgba(90, 140, 170, 0.6);
+  color: rgba(230, 248, 255, 0.6);
+}
+
+.faceDown .cardInner {
+  background: radial-gradient(circle at top, rgba(18, 42, 66, 0.6), rgba(4, 12, 20, 0.9));
+}

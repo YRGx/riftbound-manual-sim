@@ -19,9 +19,16 @@ export default async function LobbyPage() {
     .or(`player1_id.eq.${user.id},player2_id.eq.${user.id}`)
     .order("created_at", { ascending: false });
 
+  const { data: decks } = await supabase
+    .from("decks")
+    .select("id, name, updated_at")
+    .eq("owner_id", user.id)
+    .order("updated_at", { ascending: false });
+
   return (
     <LobbyClient
       initialMatches={(matches ?? []) as MatchSummary[]}
+      decks={(decks ?? []) as { id: string; name: string }[]}
       userId={user.id}
     />
   );

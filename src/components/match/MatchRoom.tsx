@@ -189,11 +189,7 @@ export default function MatchRoom({ match, initialEvents, currentUserId }: Match
         </header>
 
         <div className={styles.stage}>
-          <div
-            className={styles.zoneCanvas}
-            style={{ width: ZONE_CANVAS.width, height: ZONE_CANVAS.height }}
-            aria-hidden
-          >
+          <div className={styles.zoneCanvas} style={{ width: ZONE_CANVAS.width, height: ZONE_CANVAS.height }} aria-hidden>
             {ZONES.map((zone) => (
               <div
                 key={zone.name}
