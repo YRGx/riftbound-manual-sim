@@ -1,16 +1,39 @@
 .page {
   height: 100vh;
-  background-color: rgba(3, 11, 18, 0.4);
-  background-image: url("/images/099305b5-336e-4110-8975-34a89ec7178f.png");
+  color: #d7f5ff;
+  font-family: "Segoe UI", sans-serif;
+  overflow: hidden;
+  position: relative;
+  background-color: #020910;
+}
+
+.pageBackground {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  background-image: url("/images/Riftbound background 4k.png");
+  background-image: image-set(
+    url("/images/Riftbound background 4k.png") 1x,
+    url("/images/Riftbound background 4k.png") 2x
+  );
   background-size: cover;
   background-position: center;
-  color: #d7f5ff;
+  background-repeat: no-repeat;
+  transform: translateZ(0);
+  filter: saturate(1.08) contrast(1.05);
+}
+
+.pageContent {
+  position: relative;
+  z-index: 1;
   padding: 24px clamp(16px, 4vw, 48px);
   display: flex;
   flex-direction: column;
   gap: 16px;
-  font-family: "Segoe UI", sans-serif;
-  overflow: hidden;
+  height: 100%;
 }
 
 .page * {

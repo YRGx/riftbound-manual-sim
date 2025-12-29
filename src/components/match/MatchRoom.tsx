@@ -1,16 +1,13 @@
 "use client";
-
-import { useEffect, useMemo, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/src/lib/supabaseClient";
 import type {
-  MatchCard,
   MatchEventRecord,
   MatchState,
   MatchSummary,
   PlayerSlot,
   PlayerState,
-  ZoneKey,
 } from "@/src/types/match";
 import styles from "./MatchRoom.module.css";
 
@@ -21,64 +18,9 @@ interface MatchRoomProps {
   currentUserId: string;
 }
 
-interface DropPayload {
-  cardUid: string;
-  fromSlot: PlayerSlot;
-  fromZone: ZoneKey;
-}
-
-type BoardZoneVariant = "small" | "long";
-
-interface LayoutZone {
-  label: string;
-  variant: BoardZoneVariant;
-  zoneKey?: ZoneKey;
-}
-
-interface PlayerMatLayout {
-  left: LayoutZone[];
-  center: LayoutZone[];
-  right: LayoutZone[];
-}
-
 const BOARD_BASE_HEIGHT = 900;
 const HEADER_RESERVE = 140;
 const MIN_BOARD_SCALE = 0.7;
-
-const PLAYER_MAT_LAYOUT: Record<"top" | "bottom", PlayerMatLayout> = {
-  top: {
-    left: [
-      { label: "Trash", variant: "small", zoneKey: "discard" },
-      { label: "Runes Deck", variant: "small" },
-    ],
-    center: [
-      { label: "Runes", variant: "long", zoneKey: "hand" },
-      { label: "Base", variant: "long" },
-      { label: "Battlefield", variant: "long", zoneKey: "battlefield" },
-    ],
-    right: [
-      { label: "Main Deck", variant: "small", zoneKey: "deck" },
-      { label: "Champion", variant: "small" },
-      { label: "Legend", variant: "small" },
-    ],
-  },
-  bottom: {
-    left: [
-      { label: "Champion", variant: "small" },
-      { label: "Legend", variant: "small" },
-    ],
-    center: [
-      { label: "Battlefield", variant: "long", zoneKey: "battlefield" },
-      { label: "Base", variant: "long" },
-      { label: "Runes", variant: "long", zoneKey: "hand" },
-    ],
-    right: [
-      { label: "Main Deck", variant: "small", zoneKey: "deck" },
-      { label: "Trash", variant: "small", zoneKey: "discard" },
-      { label: "Runes Deck", variant: "small" },
-    ],
-  },
-};
 
 export default function MatchRoom({ match, initialState, initialEvents, currentUserId }: MatchRoomProps) {
   const router = useRouter();
@@ -154,31 +96,10 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
     }
   }
 
-  function handleDrop(slot: PlayerSlot, zone: ZoneKey, nativeEvent: DragEvent<HTMLDivElement>) {
-    if (!viewerSlot) return;
-    nativeEvent.preventDefault();
-    const data = nativeEvent.dataTransfer.getData("application/json");
-    if (!data) return;
-
-    const payload = JSON.parse(data) as DropPayload;
-    runAction("move-card", {
-      cardUid: payload.cardUid,
-      fromSlot: payload.fromSlot,
-      fromZone: payload.fromZone,
-      toSlot: slot,
-      toZone: zone,
-    });
-  }
-
-  function handleDragStart(event: DragEvent<HTMLDivElement>, slot: PlayerSlot, zone: ZoneKey, card: MatchCard) {
-    event.dataTransfer.setData(
-      "application/json",
-      JSON.stringify({ cardUid: card.uid, fromSlot: slot, fromZone: zone })
-    );
-  }
-
   return (
     <main className={styles.page}>
+      <div className={styles.pageBackground} aria-hidden />
+      <div className={styles.pageContent}>
       <header className={styles.matchHeader}>
         <div className={styles.headerButtons}>
           <button onClick={() => router.push("/lobby")} className={styles.secondaryButton}>
@@ -205,7 +126,6 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
           >
             <div className={styles.board}>
             <PlayerMat
-              variant="top"
               slot={topSlot}
               viewerSlot={viewerSlot}
               player={state.players[topSlot]}
@@ -214,14 +134,11 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
               onShuffle={() => runAction("shuffle-deck", { player: topSlot })}
               onMulligan={() => runAction("mulligan", { player: topSlot })}
               onLife={(delta) => runAction("life-change", { player: topSlot, delta })}
-              onDrop={handleDrop}
-              onDragStart={handleDragStart}
             />
 
             <div className={styles.centerField}>RIFTBOUND ARENA</div>
 
             <PlayerMat
-              variant="bottom"
               slot={bottomSlot}
               viewerSlot={viewerSlot}
               player={state.players[bottomSlot]}
@@ -230,8 +147,6 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
               onShuffle={() => runAction("shuffle-deck", { player: bottomSlot })}
               onMulligan={() => runAction("mulligan", { player: bottomSlot })}
               onLife={(delta) => runAction("life-change", { player: bottomSlot, delta })}
-              onDrop={handleDrop}
-              onDragStart={handleDragStart}
             />
           </div>
 
@@ -267,12 +182,12 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
           </div>
         </aside>
       </div>
+      </div>
     </main>
   );
 }
 
 interface PlayerMatProps {
-  variant: "top" | "bottom";
   slot: PlayerSlot;
   viewerSlot: PlayerSlot | null;
   player: PlayerState;
@@ -281,17 +196,9 @@ interface PlayerMatProps {
   onShuffle: () => void;
   onMulligan: () => void;
   onLife: (delta: number) => void;
-  onDrop: (slot: PlayerSlot, zone: ZoneKey, event: DragEvent<HTMLDivElement>) => void;
-  onDragStart: (
-    event: DragEvent<HTMLDivElement>,
-    slot: PlayerSlot,
-    zone: ZoneKey,
-    card: MatchCard
-  ) => void;
 }
 
 function PlayerMat({
-  variant,
   slot,
   viewerSlot,
   player,
@@ -300,13 +207,9 @@ function PlayerMat({
   onShuffle,
   onMulligan,
   onLife,
-  onDrop,
-  onDragStart,
 }: PlayerMatProps) {
-  const layout = PLAYER_MAT_LAYOUT[variant];
   const label = viewerSlot === slot ? "You" : slot === "p1" ? "Player One" : "Player Two";
   const controlsEnabled = canControl && viewerSlot === slot;
-  const playerClass = [styles.player, variant === "top" ? styles.playerTop : ""].filter(Boolean).join(" ");
 
   return (
     <div className={styles.playerShell}>
@@ -348,128 +251,6 @@ function PlayerMat({
             </button>
           </div>
         </div>
-      </div>
-
-      <div className={playerClass}>
-        <div className={styles.sideColumn}>
-          {layout.left.map((config, index) => (
-            <BoardZone
-              key={`left-${config.label}-${index}`}
-              config={config}
-              slot={slot}
-              viewerSlot={viewerSlot}
-              player={player}
-              canControl={controlsEnabled}
-              onDrop={onDrop}
-              onDragStart={onDragStart}
-            />
-          ))}
-        </div>
-        <div className={styles.mainColumn}>
-          {layout.center.map((config, index) => (
-            <BoardZone
-              key={`center-${config.label}-${index}`}
-              config={config}
-              slot={slot}
-              viewerSlot={viewerSlot}
-              player={player}
-              canControl={controlsEnabled}
-              onDrop={onDrop}
-              onDragStart={onDragStart}
-            />
-          ))}
-        </div>
-        <div className={styles.sideColumn}>
-          {layout.right.map((config, index) => (
-            <BoardZone
-              key={`right-${config.label}-${index}`}
-              config={config}
-              slot={slot}
-              viewerSlot={viewerSlot}
-              player={player}
-              canControl={controlsEnabled}
-              onDrop={onDrop}
-              onDragStart={onDragStart}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface BoardZoneProps {
-  config: LayoutZone;
-  slot: PlayerSlot;
-  viewerSlot: PlayerSlot | null;
-  player: PlayerState;
-  canControl: boolean;
-  onDrop: (slot: PlayerSlot, zone: ZoneKey, event: DragEvent<HTMLDivElement>) => void;
-  onDragStart: (
-    event: DragEvent<HTMLDivElement>,
-    slot: PlayerSlot,
-    zone: ZoneKey,
-    card: MatchCard
-  ) => void;
-}
-
-function BoardZone({ config, slot, viewerSlot, player, canControl, onDrop, onDragStart }: BoardZoneProps) {
-  const { label, variant, zoneKey } = config;
-  const cards = zoneKey ? player.zones[zoneKey] : [];
-  const faceDown = zoneKey === "deck" || (zoneKey === "hand" && viewerSlot !== slot);
-  const showCards = Boolean(zoneKey) && !faceDown;
-  const dropEnabled = Boolean(zoneKey) && canControl;
-  const zoneClass = [
-    styles.zone,
-    variant === "small" ? styles.zoneSmall : styles.zoneLong,
-    !zoneKey ? styles.zoneReserved : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    <div
-      className={zoneClass}
-      onDragOver={(event) => {
-        if (dropEnabled) {
-          event.preventDefault();
-        }
-      }}
-      onDrop={(event) => {
-        if (dropEnabled && zoneKey) {
-          onDrop(slot, zoneKey, event);
-        }
-      }}
-    >
-      <div className={styles.zoneLabel}>
-        <span>{label}</span>
-        {zoneKey && <span>{cards.length}</span>}
-      </div>
-      <div className={styles.zoneBody}>
-        {!zoneKey && <p className={styles.zoneHint}>Reserved</p>}
-        {zoneKey && showCards && cards.length === 0 && <p className={styles.zoneHint}>Empty</p>}
-        {zoneKey && showCards && cards.length > 0 && (
-          <div className={styles.cardStack}>
-            {cards.map((card) => (
-              <div
-                key={card.uid}
-                draggable={dropEnabled}
-                onDragStart={(event) => zoneKey && onDragStart(event, slot, zoneKey, card)}
-                className={[styles.card, dropEnabled ? styles.cardDraggable : styles.cardDisabled]
-                  .filter(Boolean)
-                  .join(" ")}
-              >
-                <p>{card.name}</p>
-              </div>
-            ))}
-          </div>
-        )}
-        {zoneKey && !showCards && (
-          <div className={styles.hiddenStack}>
-            <span />
-            <p>Hidden stack</p>
-          </div>
-        )}
       </div>
     </div>
   );
