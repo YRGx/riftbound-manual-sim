@@ -12,23 +12,127 @@ interface MatchRoomProps {
   currentUserId: string;
 }
 
-const ZONE_CANVAS = { width: 1440, height: 960 };
-const ZONES = [
-  { name: "zone_01", x: 133, y: 0, width: 138, height: 95 },
-  { name: "zone_02", x: 283, y: 0, width: 874, height: 294 },
-  { name: "zone_03", x: 1163, y: 0, width: 138, height: 95 },
-  { name: "zone_04", x: 133, y: 116, width: 138, height: 178 },
-  { name: "zone_05", x: 1010, y: 116, width: 138, height: 178 },
-  { name: "zone_06", x: 1163, y: 116, width: 138, height: 178 },
-  { name: "zone_07", x: 137, y: 315, width: 530, height: 269 },
-  { name: "zone_08", x: 771, y: 315, width: 530, height: 262 },
-  { name: "zone_09", x: 119, y: 598, width: 152, height: 178 },
-  { name: "zone_10", x: 286, y: 598, width: 138, height: 184 },
-  { name: "zone_11", x: 439, y: 598, width: 712, height: 186 },
-  { name: "zone_12", x: 1163, y: 598, width: 138, height: 178 },
-  { name: "zone_13", x: 286, y: 787, width: 865, height: 173 },
-  { name: "zone_14", x: 133, y: 796, width: 138, height: 164 },
-  { name: "zone_15", x: 1163, y: 797, width: 138, height: 163 },
+const ZONE_CANVAS = { width: 1920, height: 1080 };
+const ZONES: Array<{ name: string; x: number; y: number; width: number; height: number; rotation?: number }> = [
+  {
+    name: "zones_p2_champion",
+    x: 1663.76528480649,
+    y: 330.1842706054449,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_p2_runes",
+    x: 1491.0358276367188,
+    y: 105.52299499511716,
+    width: 976.542724609375,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_p2_base",
+    x: 1318.3063659667969,
+    y: 330.18427060544485,
+    width: 803.8131713867188,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_p2_rune_deck",
+    x: 1663.76528480649,
+    y: 105.52299499511719,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_p2_trash",
+    x: 500.94580078125,
+    y: 105.52299499511705,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_p2_deck",
+    x: 500.94580078125,
+    y: 330.18427060544474,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_p2_legend",
+    x: 1491.0358276367188,
+    y: 330.1842706054449,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+    rotation: 180,
+  },
+  {
+    name: "zones_battlefield_left",
+    x: 345,
+    y: 355,
+    width: 602,
+    height: 294,
+  },
+  {
+    name: "zones_battlefield_right",
+    x: 1064,
+    y: 355,
+    width: 600,
+    height: 294,
+  },
+  {
+    name: "zones_p1_champion",
+    x: 345.1504878848791,
+    y: 673.3853988945484,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+  },
+  {
+    name: "zones_p1_runes",
+    x: 517.8799743652344,
+    y: 898.0467834472656,
+    width: 976.542724609375,
+    height: 200.9532928466797,
+  },
+  {
+    name: "zones_p1_base",
+    x: 690.6095581054688,
+    y: 673.3853988945484,
+    width: 803.8131713867188,
+    height: 200.9532928466797,
+  },
+  {
+    name: "zones_p1_rune_deck",
+    x: 345.1504878848791,
+    y: 898.0467834472656,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+  },
+  {
+    name: "zones_p1_trash",
+    x: 1507.9701843261719,
+    y: 898.0467834472656,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+  },
+  {
+    name: "zones_p1_deck",
+    x: 1507.9701843261719,
+    y: 673.3853988945484,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+  },
+  {
+    name: "zones_p1_legend",
+    x: 517.8799743652344,
+    y: 673.3853988945484,
+    width: 155.79525756835938,
+    height: 200.9532928466797,
+  },
 ];
 
 export default function MatchRoom({ match, initialEvents, currentUserId }: MatchRoomProps) {
@@ -100,6 +204,8 @@ export default function MatchRoom({ match, initialEvents, currentUserId }: Match
                   top: zone.y,
                   width: zone.width,
                   height: zone.height,
+                  transform: `rotate(${zone.rotation ?? 0}deg)`,
+                  transformOrigin: "0 0",
                 }}
               />
             ))}

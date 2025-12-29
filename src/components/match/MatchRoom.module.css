@@ -43,7 +43,7 @@
 
 .matchHeader {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 0;
   border: none;
   background: transparent;
@@ -55,6 +55,8 @@
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  width: 100%;
+  justify-content: space-between;
 }
 
 .secondaryButton {
@@ -112,6 +114,22 @@
   position: absolute;
   border: 1px solid rgba(4, 204, 231, 0.85);
   box-sizing: border-box;
+  border-radius: 12px;
+}
+
+.zoneRect::after {
+  content: attr(data-zone);
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(4, 204, 231, 0.85);
+  background: rgba(2, 8, 18, 0.55);
+  padding: 2px 6px;
+  border-radius: 6px;
+  pointer-events: none;
 }
 
 .boardViewport {
