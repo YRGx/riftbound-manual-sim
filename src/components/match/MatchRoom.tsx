@@ -2,13 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/src/lib/supabaseClient";
-import type {
-  MatchEventRecord,
-  MatchState,
-  MatchSummary,
-  PlayerSlot,
-  PlayerState,
-} from "@/src/types/match";
+import type { MatchEventRecord, MatchState, MatchSummary, PlayerSlot } from "@/src/types/match";
 import styles from "./MatchRoom.module.css";
 
 interface MatchRoomProps {
@@ -18,17 +12,29 @@ interface MatchRoomProps {
   currentUserId: string;
 }
 
-const BOARD_BASE_HEIGHT = 900;
-const HEADER_RESERVE = 140;
-const MIN_BOARD_SCALE = 0.7;
+const ZONE_CANVAS = { width: 1440, height: 960 };
+const ZONES = [
+  { name: "zone_01", x: 133, y: 0, width: 138, height: 95 },
+  { name: "zone_02", x: 283, y: 0, width: 874, height: 294 },
+  { name: "zone_03", x: 1163, y: 0, width: 138, height: 95 },
+  { name: "zone_04", x: 133, y: 116, width: 138, height: 178 },
+  { name: "zone_05", x: 1010, y: 116, width: 138, height: 178 },
+  { name: "zone_06", x: 1163, y: 116, width: 138, height: 178 },
+  { name: "zone_07", x: 137, y: 315, width: 530, height: 269 },
+  { name: "zone_08", x: 771, y: 315, width: 530, height: 262 },
+  { name: "zone_09", x: 119, y: 598, width: 152, height: 178 },
+  { name: "zone_10", x: 286, y: 598, width: 138, height: 184 },
+  { name: "zone_11", x: 439, y: 598, width: 712, height: 186 },
+  { name: "zone_12", x: 1163, y: 598, width: 138, height: 178 },
+  { name: "zone_13", x: 286, y: 787, width: 865, height: 173 },
+  { name: "zone_14", x: 133, y: 796, width: 138, height: 164 },
+  { name: "zone_15", x: 1163, y: 797, width: 138, height: 163 },
+];
 
-export default function MatchRoom({ match, initialState, initialEvents, currentUserId }: MatchRoomProps) {
+export default function MatchRoom({ match, initialEvents, currentUserId }: MatchRoomProps) {
   const router = useRouter();
-  const [state, setState] = useState<MatchState>(initialState);
   const [events, setEvents] = useState<MatchEventRecord[]>(initialEvents);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [logOpen, setLogOpen] = useState(false);
-  const [boardScale, setBoardScale] = useState(1);
 
   const viewerSlot: PlayerSlot | null = useMemo(() => {
     if (match.player1_id === currentUserId) return "p1";
@@ -36,20 +42,9 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
     return null;
   }, [match.player1_id, match.player2_id, currentUserId]);
 
-  const bottomSlot: PlayerSlot = viewerSlot ?? "p1";
-  const topSlot: PlayerSlot = bottomSlot === "p1" ? "p2" : "p1";
-  const canControl = Boolean(viewerSlot);
-
   useEffect(() => {
     const channel = supabase
       .channel(`match-${match.id}`)
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "match_state", filter: `match_id=eq.${match.id}` },
-        (payload) => {
-          setState(payload.new.state as MatchState);
-        }
-      )
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "match_events", filter: `match_id=eq.${match.id}` },
@@ -64,195 +59,81 @@ export default function MatchRoom({ match, initialState, initialEvents, currentU
     };
   }, [match.id]);
 
-  useEffect(() => {
-    function syncScale() {
-      if (typeof window === "undefined") {
-        return;
-      }
-      const available = window.innerHeight - HEADER_RESERVE;
-      const ratio = available / BOARD_BASE_HEIGHT;
-      const nextScale = Math.min(1, Math.max(MIN_BOARD_SCALE, ratio));
-      setBoardScale(Number.isFinite(nextScale) ? nextScale : 1);
-    }
-
-    syncScale();
-    window.addEventListener("resize", syncScale);
-    return () => {
-      window.removeEventListener("resize", syncScale);
-    };
-  }, []);
-
   async function runAction(type: string, payload?: Record<string, unknown>) {
-    setActionError(null);
     const response = await fetch(`/api/match/${match.code}/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type, payload }),
     });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      setActionError(body.error ?? "Action failed");
-    }
   }
 
   return (
     <main className={styles.page}>
       <div className={styles.pageBackground} aria-hidden />
       <div className={styles.pageContent}>
-      <header className={styles.matchHeader}>
-        <div className={styles.headerButtons}>
-          <button onClick={() => router.push("/lobby")} className={styles.secondaryButton}>
-            Back to Lobby
-          </button>
-          {viewerSlot && (
-            <button onClick={() => runAction("end-turn")} className={styles.primaryButton}>
-              End Turn
+        <header className={styles.matchHeader}>
+          <div className={styles.headerButtons}>
+            <button onClick={() => router.push("/lobby")} className={styles.secondaryButton}>
+              Back to Lobby
             </button>
-          )}
-        </div>
-      </header>
+            {viewerSlot && (
+              <button onClick={() => runAction("end-turn")} className={styles.primaryButton}>
+                End Turn
+              </button>
+            )}
+          </div>
+        </header>
 
-      <div className={styles.stage}>
-        <div className={styles.boardViewport} style={{ height: BOARD_BASE_HEIGHT * boardScale }}>
-          <section
-            className={styles.boardShell}
-            style={{
-              height: BOARD_BASE_HEIGHT,
-              ...(boardScale < 1
-                ? { transform: `scale(${boardScale})`, transformOrigin: "center top" }
-                : {}),
-            }}
+        <div className={styles.stage}>
+          <div
+            className={styles.zoneCanvas}
+            style={{ width: ZONE_CANVAS.width, height: ZONE_CANVAS.height }}
+            aria-hidden
           >
-            <div className={styles.board}>
-            <PlayerMat
-              slot={topSlot}
-              viewerSlot={viewerSlot}
-              player={state.players[topSlot]}
-              canControl={canControl}
-              onDraw={() => runAction("draw-card", { player: topSlot })}
-              onShuffle={() => runAction("shuffle-deck", { player: topSlot })}
-              onMulligan={() => runAction("mulligan", { player: topSlot })}
-              onLife={(delta) => runAction("life-change", { player: topSlot, delta })}
-            />
-
-            <div className={styles.centerField}>RIFTBOUND ARENA</div>
-
-            <PlayerMat
-              slot={bottomSlot}
-              viewerSlot={viewerSlot}
-              player={state.players[bottomSlot]}
-              canControl={canControl}
-              onDraw={() => runAction("draw-card", { player: bottomSlot })}
-              onShuffle={() => runAction("shuffle-deck", { player: bottomSlot })}
-              onMulligan={() => runAction("mulligan", { player: bottomSlot })}
-              onLife={(delta) => runAction("life-change", { player: bottomSlot, delta })}
-            />
-          </div>
-
-          {actionError && <p className={styles.errorBanner}>{actionError}</p>}
-          </section>
-        </div>
-
-        <button
-          type="button"
-          className={`${styles.logTab} ${logOpen ? styles.logTabOpen : ""}`}
-          onClick={() => setLogOpen((prev) => !prev)}
-        >
-          Log
-        </button>
-
-        <aside className={`${styles.logDrawer} ${logOpen ? styles.logDrawerOpen : ""}`}>
-          <div className={styles.logHeader}>
-            <h2>Game Log</h2>
-            <button type="button" className={styles.closeDrawer} onClick={() => setLogOpen(false)}>
-              Close
-            </button>
-          </div>
-          <div className={styles.logScroll}>
-            {events.length === 0 && <p className={styles.emptyLog}>Actions will appear here.</p>}
-            {events.map((event) => (
-              <div key={event.id} className={styles.logEntry}>
-                <p>{describeEvent(event)}</p>
-                <p className={styles.logTimestamp}>
-                  {new Date(event.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </p>
-              </div>
+            {ZONES.map((zone) => (
+              <div
+                key={zone.name}
+                className={styles.zoneRect}
+                data-zone={zone.name}
+                style={{
+                  left: zone.x,
+                  top: zone.y,
+                  width: zone.width,
+                  height: zone.height,
+                }}
+              />
             ))}
           </div>
-        </aside>
-      </div>
+          <button
+            type="button"
+            className={`${styles.logTab} ${logOpen ? styles.logTabOpen : ""}`}
+            onClick={() => setLogOpen((prev) => !prev)}
+          >
+            Log
+          </button>
+
+          <aside className={`${styles.logDrawer} ${logOpen ? styles.logDrawerOpen : ""}`}>
+            <div className={styles.logHeader}>
+              <h2>Game Log</h2>
+              <button type="button" className={styles.closeDrawer} onClick={() => setLogOpen(false)}>
+                Close
+              </button>
+            </div>
+            <div className={styles.logScroll}>
+              {events.length === 0 && <p className={styles.emptyLog}>Actions will appear here.</p>}
+              {events.map((event) => (
+                <div key={event.id} className={styles.logEntry}>
+                  <p>{describeEvent(event)}</p>
+                  <p className={styles.logTimestamp}>
+                    {new Date(event.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </aside>
+        </div>
       </div>
     </main>
-  );
-}
-
-interface PlayerMatProps {
-  slot: PlayerSlot;
-  viewerSlot: PlayerSlot | null;
-  player: PlayerState;
-  canControl: boolean;
-  onDraw: () => void;
-  onShuffle: () => void;
-  onMulligan: () => void;
-  onLife: (delta: number) => void;
-}
-
-function PlayerMat({
-  slot,
-  viewerSlot,
-  player,
-  canControl,
-  onDraw,
-  onShuffle,
-  onMulligan,
-  onLife,
-}: PlayerMatProps) {
-  const label = viewerSlot === slot ? "You" : slot === "p1" ? "Player One" : "Player Two";
-  const controlsEnabled = canControl && viewerSlot === slot;
-
-  return (
-    <div className={styles.playerShell}>
-      <div className={styles.playerHeader}>
-        <div>
-          <p className={styles.playerSlot}>{slot.toUpperCase()}</p>
-          <h2>{label}</h2>
-          <p className={styles.playerCounts}>
-            Deck {player.zones.deck.length} | Hand {player.zones.hand.length}
-          </p>
-        </div>
-        <div className={styles.playerControls}>
-          <div className={styles.lifeDial}>
-            <button
-              disabled={!controlsEnabled}
-              onClick={() => onLife(-1)}
-              className={styles.lifeButton}
-            >
-              -
-            </button>
-            <span className={styles.lifeValue}>{player.life}</span>
-            <button
-              disabled={!controlsEnabled}
-              onClick={() => onLife(1)}
-              className={styles.lifeButton}
-            >
-              +
-            </button>
-          </div>
-          <div className={styles.actionButtons}>
-            <button onClick={onDraw} disabled={!controlsEnabled} className={styles.actionButton}>
-              Draw
-            </button>
-            <button onClick={onShuffle} disabled={!controlsEnabled} className={styles.actionButton}>
-              Shuffle
-            </button>
-            <button onClick={onMulligan} disabled={!controlsEnabled} className={styles.actionButton}>
-              Mulligan
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
